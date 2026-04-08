@@ -1,0 +1,22 @@
+## X-Flavor: retail
+## X-Expansion: MID
+## Interface: 120001, 120005
+## Title: Mythic Tools
+## Notes: Social Mythic+ history for Midnight.
+## Author: OpenAI
+## Version: 0.3.0
+## SavedVariables: MythicToolsDB
+
+Ace3/LibStub/LibStub.lua
+Ace3/AceGUI-3.0/AceGUI-3.0.xml
+Libs/lib-st/Core.lua
+
+Core.lua
+Database.lua
+Capture.lua
+Social.lua
+UI.lua
+Slash.lua
+
+
+
