@@ -68,22 +68,26 @@ local function AccumulateAggregate(target, run, dps, hps)
         target.overtimeRuns = (target.overtimeRuns or 0) + 1
     end
 
+    local isAbandoned = run.result == "abandoned"
+
     if run.level and run.level > 0 then
         target.bestLevel = math.max(target.bestLevel or 0, run.level)
         if run.result == "timed" then
             target.bestTimedLevel = math.max(target.bestTimedLevel or 0, run.level)
         end
-        target.totalLevel = (target.totalLevel or 0) + run.level
-        target.countedLevels = (target.countedLevels or 0) + 1
+        if not isAbandoned then
+            target.totalLevel = (target.totalLevel or 0) + run.level
+            target.countedLevels = (target.countedLevels or 0) + 1
+        end
     end
 
-    if dps ~= nil then
+    if dps ~= nil and not isAbandoned then
         target.maxDps = math.max(target.maxDps or 0, dps)
         target.totalDps = (target.totalDps or 0) + dps
         target.countedDps = (target.countedDps or 0) + 1
     end
 
-    if hps ~= nil then
+    if hps ~= nil and not isAbandoned then
         target.maxHps = math.max(target.maxHps or 0, hps)
         target.totalHps = (target.totalHps or 0) + hps
         target.countedHps = (target.countedHps or 0) + 1
@@ -243,6 +247,34 @@ function MythicTools:TrimRunsToLimit()
     while #runs > limit do
         table.remove(runs, #runs)
     end
+end
+
+function MythicTools:GetPlayerDPS(run, stat)
+    local recordedDPS = tonumber(stat and stat.dps)
+    if recordedDPS ~= nil then
+        return recordedDPS
+    end
+
+    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.damageActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
+    if durationSeconds <= 0 then
+        return 0
+    end
+
+    return (tonumber(stat and stat.damage) or 0) / durationSeconds
+end
+
+function MythicTools:GetPlayerHPS(run, stat)
+    local recordedHPS = tonumber(stat and stat.hps)
+    if recordedHPS ~= nil then
+        return recordedHPS
+    end
+
+    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.healingActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
+    if durationSeconds <= 0 then
+        return 0
+    end
+
+    return (tonumber(stat and stat.healing) or 0) / durationSeconds
 end
 
 function MythicTools:RebuildPlayerIndex()

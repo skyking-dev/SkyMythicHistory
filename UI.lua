@@ -7,7 +7,7 @@ local QUESTION_MARK_ICON = "Interface\\ICONS\\INV_Misc_QuestionMark"
 local DEFAULT_DUNGEON_ICON = "Interface\\Icons\\achievement_challengemode_gold"
 local DEFAULT_DUNGEON_BG = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark"
 local MAX_LOOT_ICONS = 5
-local RUN_ROWS = 5
+local RUN_ROWS = 6
 local PLAYER_ROWS = 6
 local RECENT_RUN_ROWS = 4
 local COMPLETION_ROWS = 5
@@ -56,6 +56,7 @@ local COLORS = {
     accentSoft = {0.7, 0.7, 0.7, 0.5},
     success = {0.35, 0.85, 0.35, 1},
     danger = {0.85, 0.25, 0.25, 1},
+    warning = {0.85, 0.75, 0.20, 1},
     text = {1, 1, 1, 1},
     muted = {0.7, 0.7, 0.7, 1},
     subdued = {0.5, 0.5, 0.5, 1},
@@ -225,7 +226,7 @@ local function GetRunStatusColor(run)
     if result == "abandoned" then
         return COLORS.danger
     end
-    return COLORS.accentSoft
+    return COLORS.warning
 end
 
 local function GetRunStatusText(run)
@@ -640,6 +641,97 @@ local function CreateAceFlowRow(parent, topOffset, height)
     local group = AceGUI:Create("SimpleGroup")
     group:SetLayout("Flow")
     return AttachAceContainer(group, parent, 12, topOffset, -12, height)
+end
+
+local function CreateAceSpacer(width)
+    if not AceGUI then return nil end
+    local spacer = AceGUI:Create("Label")
+    spacer:SetWidth(width)
+    spacer:SetText("")
+    return spacer
+end
+
+local function StyleAceEditWidget(widget)
+    if not widget then return end
+    local eb = widget.editBox
+    if eb then
+        if eb.SetBackdropColor then
+            eb:SetBackdropColor(0.20, 0.20, 0.20, 1)
+        end
+        if eb.SetBackdropBorderColor then
+            eb:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.9)
+        end
+    end
+end
+
+local function StyleAceDropdownWidget(widget)
+    if not widget then return end
+    local btn = widget.button
+    if btn then
+        if btn.SetBackdropColor then
+            btn:SetBackdropColor(0.20, 0.20, 0.20, 1)
+        end
+        if btn.SetBackdropBorderColor then
+            btn:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.9)
+        end
+    end
+end
+
+local function ApplyThinScrollBar(scrollFrame)
+    if not scrollFrame then return end
+    local scrollBar
+    for _, child in ipairs({scrollFrame:GetChildren()}) do
+        if child.GetThumbTexture or child:GetObjectType() == "Slider" then
+            scrollBar = child
+            break
+        end
+    end
+    if not scrollBar then return end
+
+    scrollBar:SetWidth(6)
+    scrollBar:ClearAllPoints()
+    scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", 0, -1)
+    scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", 0, 1)
+
+    for _, btn in ipairs({scrollBar:GetChildren()}) do
+        btn:SetAlpha(0)
+        btn:EnableMouse(false)
+    end
+
+    local numRegions = scrollBar.GetNumRegions and scrollBar:GetNumRegions() or 0
+    for i = 1, numRegions do
+        local region = select(i, scrollBar:GetRegions())
+        if region and region.SetTexture then
+            region:SetTexture(nil)
+        end
+    end
+
+    local thumb = scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()
+    if thumb then
+        thumb:SetTexture(WHITE_TEXTURE)
+        thumb:SetWidth(4)
+        thumb:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.65)
+    end
+end
+
+local function ApplyThinScrollBarToST(tableWidget)
+    if not tableWidget or not tableWidget.scrollframe then return end
+    local scrollframe = tableWidget.scrollframe
+    local f = tableWidget.frame
+
+    -- Hide lib-st's custom scroll trough frames (they are Frame children of scrollframe)
+    for _, child in ipairs({scrollframe:GetChildren()}) do
+        if child:GetObjectType() == "Frame" then
+            child:Hide()
+        end
+    end
+
+    -- Expand the scrollframe into the space freed by removing the wide trough
+    scrollframe:ClearAllPoints()
+    scrollframe:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -4)
+    scrollframe:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 3)
+
+    ApplyThinScrollBar(scrollframe)
 end
 
 local function CreateAceEditWidget(labelText, width, value, onChanged)
@@ -1242,14 +1334,14 @@ local function StyleListButton(button, selected, accentColor)
         SetTextColor(button.Title, COLORS.bright)
     else
         MythicTools:ApplySurface(button, COLORS.rowBG, COLORS.surface, nil)
-        button.Accent:SetVertexColor(accentColor[1], accentColor[2], accentColor[3], 0.30)
+        button.Accent:SetVertexColor(accentColor[1], accentColor[2], accentColor[3], 0.75)
         SetTextColor(button.Title, COLORS.text)
     end
 end
 
 local function CreateSidebarMetric(parent, labelText)
     local card = CreateFrame("Frame", nil, parent)
-    card:SetSize(160, 54)
+    card:SetSize(176, 54)
     MythicTools:ApplySurface(card, COLORS.rowBG, COLORS.surface, nil)
 
     card.Value = CreateFont(card, 18, COLORS.text)
@@ -1396,7 +1488,7 @@ function MythicTools:GetFilteredPlayers()
                 timed = "timedRuns",
                 overtime = "overtimeRuns",
                 abandoned = "abandonedRuns",
-                best = "bestLevel",
+                best = "bestTimedLevel",
                 average = "averageLevel",
                 maxdps = "maxDps",
             }
@@ -1451,33 +1543,6 @@ function MythicTools:GetRunLootCount(run)
     return count
 end
 
-function MythicTools:GetPlayerDPS(run, stat)
-    local recordedDPS = tonumber(stat and stat.dps)
-    if recordedDPS ~= nil then
-        return recordedDPS
-    end
-
-    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.damageActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
-    if durationSeconds <= 0 then
-        return 0
-    end
-
-    return (tonumber(stat and stat.damage) or 0) / durationSeconds
-end
-
-function MythicTools:GetPlayerHPS(run, stat)
-    local recordedHPS = tonumber(stat and stat.hps)
-    if recordedHPS ~= nil then
-        return recordedHPS
-    end
-
-    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.healingActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
-    if durationSeconds <= 0 then
-        return 0
-    end
-
-    return (tonumber(stat and stat.healing) or 0) / durationSeconds
-end
 
 local function FormatKeyLevel(level)
     level = tonumber(level) or 0
@@ -1639,7 +1704,7 @@ function MythicTools:BuildPlayerAnalyticsTableData(players)
                 {value = playerEntry.timedRuns or 0, display = tostring(playerEntry.timedRuns or 0), color = COLORS.success},
                 {value = playerEntry.overtimeRuns or 0, display = tostring(playerEntry.overtimeRuns or 0), color = COLORS.accentSoft},
                 {value = playerEntry.abandonedRuns or 0, display = tostring(playerEntry.abandonedRuns or 0), color = COLORS.danger},
-                {value = playerEntry.bestLevel or 0, display = tostring(playerEntry.bestLevel or 0)},
+                {value = playerEntry.bestTimedLevel or 0, display = tostring(playerEntry.bestTimedLevel or 0)},
                 {value = playerEntry.averageLevel or 0, display = string.format("%.1f", playerEntry.averageLevel or 0)},
                 {value = playerEntry.maxDps or 0, display = self:FormatAmount(playerEntry.maxDps or 0)},
             }
@@ -1667,11 +1732,13 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         {name = "Max DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
     }
 
-    local tableWidget = ScrollingTable:CreateST(columns, 16, PLAYER_TABLE_ROW_HEIGHT, nil, parent)
+    local windowHeight = (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.height) or 760
+    local numRows = max(10, floor((windowHeight - 234) / PLAYER_TABLE_ROW_HEIGHT))
+    local tableWidget = ScrollingTable:CreateST(columns, numRows, PLAYER_TABLE_ROW_HEIGHT, nil, parent)
     tableWidget.frame:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, -46)
-    tableWidget.frame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -12, 12)
-    tableWidget.frame:SetBackdropColor(COLORS.panelBG[1], COLORS.panelBG[2], COLORS.panelBG[3], 0.94)
-    tableWidget.frame:SetBackdropBorderColor(COLORS.surface[1], COLORS.surface[2], COLORS.surface[3], 1)
+    tableWidget.frame:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -12, -46)
+    tableWidget.frame:SetBackdropColor(COLORS.panelBG[1], COLORS.panelBG[2], COLORS.panelBG[3], 0)
+    tableWidget.frame:SetBackdropBorderColor(0, 0, 0, 0)
     tableWidget:EnableSelection(true)
 
     local sortColumns = {
@@ -1798,8 +1865,8 @@ function MythicTools:GetSortedBreakdownEntries(breakdown)
         if (left.totalRuns or 0) ~= (right.totalRuns or 0) then
             return (left.totalRuns or 0) > (right.totalRuns or 0)
         end
-        if (left.bestLevel or 0) ~= (right.bestLevel or 0) then
-            return (left.bestLevel or 0) > (right.bestLevel or 0)
+        if (left.bestTimedLevel or 0) ~= (right.bestTimedLevel or 0) then
+            return (left.bestTimedLevel or 0) > (right.bestTimedLevel or 0)
         end
         return (left.label or "") < (right.label or "")
     end)
@@ -2453,7 +2520,7 @@ function MythicTools:HandleUnitPopupMenu(owner, rootDescription, contextData)
     end
 
     rootDescription:CreateDivider()
-    rootDescription:CreateTitle("Mythic Tools")
+    rootDescription:CreateTitle("Sky Mythic History")
     rootDescription:CreateButton(summaryText, function()
         MythicTools:OpenPlayerHistory(playerName)
     end)
@@ -2657,7 +2724,7 @@ function MythicTools:RefreshPlayerDetailView(playerEntry)
         playerEntry.timedRuns or 0,
         playerEntry.overtimeRuns or 0,
         playerEntry.abandonedRuns or 0,
-        FormatKeyLevel(playerEntry.bestLevel),
+        FormatKeyLevel(playerEntry.bestTimedLevel),
         playerEntry.averageLevel or 0
     ))
     self.ui.playerDetailSummarySecondary:SetText(("Max DPS %s  |  Avg DPS %s  |  Max HPS %s  |  Avg HPS %s"):format(
@@ -2738,21 +2805,23 @@ function MythicTools:RefreshPlayerDetailView(playerEntry)
         self.ui.playerDetailNoteStatus:SetText(noteText ~= "" and "Saved." or "Up to 160 characters.")
     end
 
-    local recentRuns = self:GetPlayerRecentRuns(playerEntry.fullName)
+    local allRecentRuns = self:GetPlayerRecentRuns(playerEntry.fullName)
+    local recentRuns = {}
+    for i = 1, min(PLAYER_DETAIL_HISTORY_ROWS, #allRecentRuns) do
+        recentRuns[i] = allRecentRuns[i]
+    end
     if self.ui.playerDetailHistoryCount then
-        self.ui.playerDetailHistoryCount:SetText(("%d run%s"):format(#recentRuns, #recentRuns == 1 and "" or "s"))
+        self.ui.playerDetailHistoryCount:SetText(("%d run%s total"):format(#allRecentRuns, #allRecentRuns == 1 and "" or "s"))
     end
     if self.ui.playerDetailEmptyHistory then
-        self.ui.playerDetailEmptyHistory:SetShown(#recentRuns == 0)
+        self.ui.playerDetailEmptyHistory:SetShown(#allRecentRuns == 0)
     end
-    local visibleHistoryRows = self:GetVisiblePlayerDetailHistoryRows()
-    if self.ui.playerDetailHistoryScroll then
-        FauxScrollFrame_Update(self.ui.playerDetailHistoryScroll, #recentRuns, visibleHistoryRows, PLAYER_DETAIL_HISTORY_ROW_HEIGHT)
+    if self.ui.playerDetailSeeAllButton then
+        self.ui.playerDetailSeeAllButton:SetShown(#allRecentRuns > 0)
     end
 
-    local offset = self.ui.playerDetailHistoryScroll and FauxScrollFrame_GetOffset(self.ui.playerDetailHistoryScroll) or 0
     for index, row in ipairs(self.ui.playerDetailHistoryRows or {}) do
-        local run = index <= visibleHistoryRows and recentRuns[offset + index] or nil
+        local run = recentRuns[index]
         if run then
             local upgradeText = GetRunUpgradeText(run)
             local scoreText = GetRunScoreText(run)
@@ -2857,27 +2926,34 @@ function MythicTools:BuildRunsPage(parent)
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceEditWidget(self.ui.runsSearch)
     topRow:AddChild(self.ui.runsSearch)
+    topRow:AddChild(CreateAceSpacer(10))
 
     self.ui.runsPlayerFilter = CreateAceEditWidget("Player", 190, self.db.ui.filters.player, function(value)
         self.db.ui.filters.player = value or ""
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceEditWidget(self.ui.runsPlayerFilter)
     topRow:AddChild(self.ui.runsPlayerFilter)
+    topRow:AddChild(CreateAceSpacer(10))
 
     self.ui.runsDateFilter = CreateAceEditWidget("Date", 120, self.db.ui.filters.date, function(value)
         self.db.ui.filters.date = value or ""
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceEditWidget(self.ui.runsDateFilter)
     topRow:AddChild(self.ui.runsDateFilter)
+    topRow:AddChild(CreateAceSpacer(10))
 
     self.ui.runsStatusFilter = CreateAceDropdownWidget("Status", 140, STATUS_OPTIONS, self.db.ui.filters.status, function(value)
         self.db.ui.filters.status = value or "all"
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceDropdownWidget(self.ui.runsStatusFilter)
     topRow:AddChild(self.ui.runsStatusFilter)
 
     self.ui.runsSeasonFilter = CreateAceDropdownWidget("Season", 170, SEASON_OPTIONS, self.db.ui.filters.season, function(value)
@@ -2888,20 +2964,25 @@ function MythicTools:BuildRunsPage(parent)
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceDropdownWidget(self.ui.runsSeasonFilter)
     bottomRow:AddChild(self.ui.runsSeasonFilter)
+    bottomRow:AddChild(CreateAceSpacer(10))
 
     self.ui.runsDungeonFilter = CreateAceDropdownWidget("Dungeon", 260, GetDungeonOptionsForSeason(self.db.ui.filters.season), self.db.ui.filters.dungeon, function(value)
         self.db.ui.filters.dungeon = value or "all"
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceDropdownWidget(self.ui.runsDungeonFilter)
     bottomRow:AddChild(self.ui.runsDungeonFilter)
+    bottomRow:AddChild(CreateAceSpacer(10))
 
     self.ui.runsOwnedFilter = CreateAceDropdownWidget("Characters", 180, GetOwnedCharacterFilterOptions(), self.db.ui.filters.ownedCharacters or "all", function(value)
         self.db.ui.filters.ownedCharacters = value or "all"
         self:SetRunViewMode("list")
         self:RefreshRunView()
     end)
+    StyleAceDropdownWidget(self.ui.runsOwnedFilter)
     bottomRow:AddChild(self.ui.runsOwnedFilter)
 
     self.ui.runsClearButton = AceGUI and AceGUI:Create("Button") or nil
@@ -2970,19 +3051,20 @@ function MythicTools:BuildRunsPage(parent)
 
     local listBody = CreateFrame("Frame", nil, listView)
     listBody:SetPoint("TOPLEFT", 10, -44)
-    listBody:SetPoint("TOPRIGHT", -30, -44)
-    listBody:SetHeight((RUN_ROWS * RUN_ROW_HEIGHT) - 8)
+    listBody:SetPoint("TOPRIGHT", -22, -44)
+    listBody:SetHeight(RUN_ROWS * RUN_ROW_HEIGHT + 2)
     ClipChildren(listBody)
     self.ui.runsListBody = listBody
 
     self.ui.runsScroll = CreateFrame("ScrollFrame", nil, listView, "FauxScrollFrameTemplate")
     self.ui.runsScroll:SetPoint("TOPLEFT", 0, -44)
-    self.ui.runsScroll:SetPoint("BOTTOMRIGHT", -26, 14)
+    self.ui.runsScroll:SetPoint("BOTTOMRIGHT", -10, 14)
     self.ui.runsScroll:SetScript("OnVerticalScroll", function(scrollFrame, offset)
         FauxScrollFrame_OnVerticalScroll(scrollFrame, offset, RUN_ROW_HEIGHT, function()
             self:RefreshRunView()
         end)
     end)
+    ApplyThinScrollBar(self.ui.runsScroll)
 
     self.ui.runRows = {}
     for index = 1, RUN_ROWS do
@@ -2998,6 +3080,7 @@ function MythicTools:BuildRunsPage(parent)
                 self:ConfirmDeleteRun(button.runId)
             else
                 self.db.ui.selectedRunId = button.runId
+                self:RefreshRunView()
                 self:ShowCompletionPopup(button.runId)
             end
         end)
@@ -3155,7 +3238,9 @@ function MythicTools:BuildPlayersPage(parent)
         self.db.ui.playerSearch = value or ""
         self:RefreshPlayersView()
     end)
+    StyleAceEditWidget(self.ui.playerSearch)
     filtersRow:AddChild(self.ui.playerSearch)
+    filtersRow:AddChild(CreateAceSpacer(10))
 
     self.ui.playersSeasonFilter = CreateAceDropdownWidget("Season", 170, SEASON_OPTIONS, (self.db.ui.playerFilters and self.db.ui.playerFilters.season) or "season1", function(value)
         self.db.ui.playerFilters.season = value or "season1"
@@ -3164,12 +3249,15 @@ function MythicTools:BuildPlayersPage(parent)
         UpdateAceDropdownOptions(self.ui.playersDungeonFilter, GetDungeonOptionsForSeason(self.db.ui.playerFilters.season), self.db.ui.playerFilters.dungeon)
         self:RefreshPlayersView()
     end)
+    StyleAceDropdownWidget(self.ui.playersSeasonFilter)
     filtersRow:AddChild(self.ui.playersSeasonFilter)
+    filtersRow:AddChild(CreateAceSpacer(10))
 
     self.ui.playersDungeonFilter = CreateAceDropdownWidget("Dungeon", 260, GetDungeonOptionsForSeason((self.db.ui.playerFilters and self.db.ui.playerFilters.season) or "season1"), (self.db.ui.playerFilters and self.db.ui.playerFilters.dungeon) or "all", function(value)
         self.db.ui.playerFilters.dungeon = value or "all"
         self:RefreshPlayersView()
     end)
+    StyleAceDropdownWidget(self.ui.playersDungeonFilter)
     filtersRow:AddChild(self.ui.playersDungeonFilter)
 
     local tableCard = CreateFrame("Frame", nil, indexView)
@@ -3189,6 +3277,9 @@ function MythicTools:BuildPlayersPage(parent)
 
     self.ui.playersTableCard = tableCard
     self.ui.playersTable = self:CreatePlayersAnalyticsTable(tableCard)
+    if self.ui.playersTable then
+        ApplyThinScrollBarToST(self.ui.playersTable)
+    end
 
     local detailView = CreateFrame("Frame", nil, page)
     detailView:SetAllPoints(page)
@@ -3320,33 +3411,34 @@ function MythicTools:BuildPlayersPage(parent)
 
     local historyTitle = CreateFont(historyCard, 13, COLORS.text)
     historyTitle:SetPoint("TOPLEFT", 16, -14)
-    historyTitle:SetText("Run history")
+    historyTitle:SetText("Last Runs")
 
     self.ui.playerDetailHistoryCount = CreateFont(historyCard, 11, COLORS.muted, "RIGHT")
     self.ui.playerDetailHistoryCount:SetPoint("TOPRIGHT", -16, -14)
 
+    self.ui.playerDetailSeeAllButton = CreateActionButton(historyCard, 86, 20, "See all")
+    self.ui.playerDetailSeeAllButton:SetPoint("TOPRIGHT", historyCard, "TOPRIGHT", -16, -10)
+    self.ui.playerDetailSeeAllButton:SetScript("OnClick", function()
+        local playerEntry = MythicTools:GetSelectedPlayerEntry()
+        if playerEntry then
+            local name = playerEntry.shortName or playerEntry.fullName or ""
+            MythicTools.db.ui.filters.player = name
+            SetAceEditText(MythicTools.ui.runsPlayerFilter, name)
+            MythicTools:SetRunViewMode("list")
+            MythicTools:ShowTab("Runs")
+        end
+    end)
+
     local historyBody = CreateFrame("Frame", nil, historyCard)
     historyBody:SetPoint("TOPLEFT", 12, -42)
-    historyBody:SetPoint("TOPRIGHT", -30, -42)
+    historyBody:SetPoint("TOPRIGHT", -12, -42)
     historyBody:SetPoint("BOTTOMLEFT", 12, 12)
-    historyBody:SetPoint("BOTTOMRIGHT", -30, 12)
+    historyBody:SetPoint("BOTTOMRIGHT", -12, 12)
     ClipChildren(historyBody)
     self.ui.playerDetailHistoryBody = historyBody
 
-    self.ui.playerDetailHistoryScroll = CreateFrame("ScrollFrame", nil, historyCard, "FauxScrollFrameTemplate")
-    self.ui.playerDetailHistoryScroll:SetPoint("TOPLEFT", 0, -42)
-    self.ui.playerDetailHistoryScroll:SetPoint("BOTTOMRIGHT", -26, 12)
-    self.ui.playerDetailHistoryScroll:SetScript("OnVerticalScroll", function(scrollFrame, offset)
-        FauxScrollFrame_OnVerticalScroll(scrollFrame, offset, PLAYER_DETAIL_HISTORY_ROW_HEIGHT, function()
-            local playerEntry = MythicTools:GetSelectedPlayerEntry()
-            if playerEntry then
-                MythicTools:RefreshPlayerDetailView(playerEntry)
-            end
-        end)
-    end)
-
     self.ui.playerDetailHistoryRows = {}
-    for index = 1, PLAYER_DETAIL_HISTORY_MAX_ROWS do
+    for index = 1, PLAYER_DETAIL_HISTORY_ROWS do
         local row = CreatePlayerDetailHistoryRow(historyBody)
         row:SetPoint("TOPLEFT", 0, -((index - 1) * PLAYER_DETAIL_HISTORY_ROW_HEIGHT))
         row:SetPoint("TOPRIGHT", 0, -((index - 1) * PLAYER_DETAIL_HISTORY_ROW_HEIGHT))
@@ -3503,7 +3595,7 @@ function MythicTools:BuildSettingsPage(parent)
 
     if not StaticPopupDialogs.MYTHICTOOLS_CLEAR_HISTORY then
         StaticPopupDialogs.MYTHICTOOLS_CLEAR_HISTORY = {
-            text = "Clear every saved Mythic Tools run?",
+            text = "Clear every saved Sky Mythic History run?",
             button1 = YES,
             button2 = NO,
             OnAccept = function()
@@ -3518,7 +3610,7 @@ function MythicTools:BuildSettingsPage(parent)
 
     if not StaticPopupDialogs.MYTHICTOOLS_DELETE_RUN then
         StaticPopupDialogs.MYTHICTOOLS_DELETE_RUN = {
-            text = "Delete this run from Mythic Tools history?\n%s",
+            text = "Delete this run from Sky Mythic History?\n%s",
             button1 = YES,
             button2 = NO,
             OnAccept = function(_, runId)
@@ -3643,16 +3735,7 @@ function MythicTools:BuildCompletionPopup()
     closeText:SetShadowColor(0, 0, 0)
     closeText:SetShadowOffset(1, -1)
 
-    local deleteButton = CreateActionButton(header, 92, 24, "Delete")
-    deleteButton:SetPoint("TOPRIGHT", closeButton, "TOPLEFT", -8, 0)
-    deleteButton:SetScript("OnClick", function()
-        local runId = frame and frame.runId
-        if runId then
-            MythicTools:ConfirmDeleteRun(runId)
-        end
-    end)
-    frame.DeleteButton = deleteButton
-    frame.Status:SetPoint("TOPRIGHT", deleteButton, "TOPLEFT", -16, 0)
+    frame.Status:SetPoint("TOPRIGHT", closeButton, "TOPLEFT", -16, 0)
 
     frame:SetMovable(true)
     header:EnableMouse(true)
@@ -3705,19 +3788,20 @@ function MythicTools:BuildCompletionPopup()
 
     local rowsBody = CreateFrame("Frame", nil, statsPanel)
     rowsBody:SetPoint("TOPLEFT", 12, -34)
-    rowsBody:SetPoint("TOPRIGHT", -30, -34)
+    rowsBody:SetPoint("TOPRIGHT", -14, -34)
     rowsBody:SetHeight(COMPLETION_ROWS * COMPLETION_ROW_HEIGHT)
     ClipChildren(rowsBody)
     frame.rowsBody = rowsBody
 
     frame.rowsScroll = CreateFrame("ScrollFrame", nil, statsPanel, "FauxScrollFrameTemplate")
     frame.rowsScroll:SetPoint("TOPLEFT", 0, -34)
-    frame.rowsScroll:SetPoint("BOTTOMRIGHT", -26, 12)
+    frame.rowsScroll:SetPoint("BOTTOMRIGHT", -10, 12)
     frame.rowsScroll:SetScript("OnVerticalScroll", function(scrollFrame, offset)
         FauxScrollFrame_OnVerticalScroll(scrollFrame, offset, COMPLETION_ROW_HEIGHT, function()
             MythicTools:RefreshCompletionPopup()
         end)
     end)
+    ApplyThinScrollBar(frame.rowsScroll)
 
     frame.rows = {}
     for index = 1, COMPLETION_ROWS do
@@ -3726,6 +3810,16 @@ function MythicTools:BuildCompletionPopup()
         row:SetPoint("TOPRIGHT", 0, -((index - 1) * COMPLETION_ROW_HEIGHT))
         frame.rows[index] = row
     end
+
+    local deleteButton = CreateActionButton(statsPanel, 92, 24, "Delete")
+    deleteButton:SetPoint("BOTTOMRIGHT", statsPanel, "BOTTOMRIGHT", -12, 8)
+    deleteButton:SetScript("OnClick", function()
+        local runId = frame and frame.runId
+        if runId then
+            MythicTools:ConfirmDeleteRun(runId)
+        end
+    end)
+    frame.DeleteButton = deleteButton
 
     self.completionPopup = frame
     self:ApplyCompletionPopupScale()
@@ -3737,6 +3831,12 @@ function MythicTools:HideCompletionPopup()
         self.completionPopup.runId = nil
         self.completionPopup.previewRun = nil
         self.completionPopup:Hide()
+    end
+    if self.db and self.db.ui then
+        self.db.ui.selectedRunId = nil
+    end
+    if self.ui then
+        self:RefreshRunView()
     end
 end
 
@@ -3930,7 +4030,7 @@ function MythicTools:CreateMinimapButton()
 
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Mythic Tools", COLORS.text[1], COLORS.text[2], COLORS.text[3])
+        GameTooltip:AddLine("Sky Mythic History", COLORS.text[1], COLORS.text[2], COLORS.text[3])
         GameTooltip:AddLine("Left click: open history", COLORS.muted[1], COLORS.muted[2], COLORS.muted[3])
         GameTooltip:AddLine("Right click: open settings", COLORS.muted[1], COLORS.muted[2], COLORS.muted[3])
         GameTooltip:Show()
@@ -4032,7 +4132,7 @@ function MythicTools:BuildUI()
 
     local title = CreateFont(header, 13, COLORS.accent)
     title:SetPoint("LEFT", 14, 0)
-    title:SetText("Mythic Tools")
+    title:SetText("Sky Mythic History")
 
     -- Botão fechar estilo Cell (× vermelho)
     local closeButton = CreateFrame("Button", nil, header, "BackdropTemplate")
@@ -4091,6 +4191,10 @@ function MythicTools:BuildUI()
         local button = CreateActionButton(sidebar, 176, 30, tabName)
         button:SetPoint("TOPLEFT", 14, -34 - ((index - 1) * 38))
         button:SetScript("OnClick", function()
+            if tabName == "Players" then
+                self.db.ui.playersView = "index"
+                self.db.ui.selectedPlayer = nil
+            end
             self:ShowTab(tabName)
         end)
         ui.tabButtons[tabName] = button

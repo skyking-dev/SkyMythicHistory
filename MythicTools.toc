@@ -1,10 +1,11 @@
 ## X-Flavor: retail
 ## X-Expansion: MID
 ## Interface: 120001, 120005
-## Title: Mythic Tools
-## Notes: Social Mythic+ history for Midnight.
-## Author: OpenAI
+## Title: Sky Mythic History
+## Notes: Social Mythic+ key history tracker for Midnight.
+## Author: Skye
 ## Version: 0.3.0
+## IconTexture: Interface\Icons\achievement_challengemode_gold
 ## SavedVariables: MythicToolsDB
 
 Ace3/LibStub/LibStub.lua
