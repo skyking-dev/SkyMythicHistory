@@ -44,24 +44,34 @@ local ScrollingTable = LibStub and LibStub("ScrollingTable", true)
 local ROLE_ICON_TEXTURE = "Interface\\LFGFrame\\UI-LFG-ICON-ROLES"
 
 local COLORS = {
-    frameBG = {0.03, 0.03, 0.04, 0.98},
-    frameBorder = {0.16, 0.17, 0.20, 1},
-    headerBG = {0.08, 0.08, 0.09, 0.96},
-    panelBG = {0.06, 0.06, 0.07, 0.97},
-    sectionBG = {0.08, 0.08, 0.09, 0.96},
-    rowBG = {0.10, 0.10, 0.11, 0.92},
-    rowSelected = {0.14, 0.15, 0.18, 0.98},
-    surface = {0.18, 0.19, 0.23, 0.78},
-    accent = {0.78, 0.83, 0.91, 1},
-    accentSoft = {0.43, 0.62, 0.86, 1},
-    success = {0.45, 0.82, 0.62, 1},
-    danger = {0.92, 0.44, 0.46, 1},
-    text = {0.94, 0.95, 0.97, 1},
-    muted = {0.73, 0.76, 0.82, 1},
-    subdued = {0.50, 0.54, 0.61, 1},
+    frameBG = {0.1, 0.1, 0.1, 0.9},
+    frameBorder = {0, 0, 0, 1},
+    headerBG = {0.115, 0.115, 0.115, 1},
+    panelBG = {0.1, 0.1, 0.1, 0.9},
+    sectionBG = {0.115, 0.115, 0.115, 1},
+    rowBG = {0.115, 0.115, 0.115, 1},
+    rowSelected = {0.23, 0.23, 0.23, 1},
+    surface = {0, 0, 0, 1},
+    accent = {0.7, 0.7, 0.7, 1},
+    accentSoft = {0.7, 0.7, 0.7, 0.5},
+    success = {0.35, 0.85, 0.35, 1},
+    danger = {0.85, 0.25, 0.25, 1},
+    text = {1, 1, 1, 1},
+    muted = {0.7, 0.7, 0.7, 1},
+    subdued = {0.5, 0.5, 0.5, 1},
     bright = {1, 1, 1, 1},
-    shadow = {0.01, 0.02, 0.03, 0.40},
+    shadow = {0, 0, 0, 0},
 }
+
+-- Dynamic class color accent (like Cell's accent system)
+do
+    local _class = select(2, UnitClass("player"))
+    if _class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[_class] then
+        local cc = RAID_CLASS_COLORS[_class]
+        COLORS.accent = {cc.r, cc.g, cc.b, 1}
+        COLORS.accentSoft = {cc.r, cc.g, cc.b, 0.5}
+    end
+end
 
 local STATUS_OPTIONS = {
     {value = "all", label = "All"},
@@ -107,6 +117,8 @@ local function CreateFont(parent, size, color, justifyH, layer, outline)
     fontString:SetFont(STANDARD_TEXT_FONT, size, outline or "")
     fontString:SetJustifyH(justifyH or "LEFT")
     fontString:SetJustifyV("MIDDLE")
+    fontString:SetShadowColor(0, 0, 0)
+    fontString:SetShadowOffset(1, -1)
     SetTextColor(fontString, color or COLORS.text)
     return fontString
 end
@@ -388,11 +400,6 @@ function MythicTools:ApplySurface(frame, bgColor, borderColor, accentColor)
         bg:SetAllPoints()
         bg:SetTexture(WHITE_TEXTURE)
 
-        local shade = frame:CreateTexture(nil, "BORDER")
-        shade:SetAllPoints()
-        shade:SetTexture(WHITE_TEXTURE)
-        shade:SetVertexColor(COLORS.shadow[1], COLORS.shadow[2], COLORS.shadow[3], COLORS.shadow[4])
-
         local top = frame:CreateTexture(nil, "ARTWORK")
         top:SetTexture(WHITE_TEXTURE)
         top:SetPoint("TOPLEFT")
@@ -417,27 +424,12 @@ function MythicTools:ApplySurface(frame, bgColor, borderColor, accentColor)
         right:SetPoint("BOTTOMRIGHT")
         right:SetWidth(1)
 
-        local accent = frame:CreateTexture(nil, "OVERLAY")
-        accent:SetTexture(WHITE_TEXTURE)
-        accent:SetPoint("TOPLEFT")
-        accent:SetPoint("TOPRIGHT")
-        accent:SetHeight(2)
-
-        local glow = frame:CreateTexture(nil, "OVERLAY")
-        glow:SetTexture(WHITE_TEXTURE)
-        glow:SetPoint("TOPLEFT", 8, -1)
-        glow:SetPoint("TOPRIGHT", -8, -1)
-        glow:SetHeight(28)
-
         surface = {
             bg = bg,
-            shade = shade,
             top = top,
             bottom = bottom,
             left = left,
             right = right,
-            accent = accent,
-            glow = glow,
         }
         frame._mtSurface = surface
     end
@@ -447,9 +439,6 @@ function MythicTools:ApplySurface(frame, bgColor, borderColor, accentColor)
     surface.bottom:SetColorTexture(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
     surface.left:SetColorTexture(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
     surface.right:SetColorTexture(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
-
-    surface.accent:Hide()
-    surface.glow:Hide()
 end
 
 local function StyleEditBox(editBox)
@@ -476,10 +465,12 @@ local function CreateLabeledEditBox(parent, labelText, width, onChanged)
     holder.Label:SetPoint("TOPLEFT", 2, 0)
     holder.Label:SetText(labelText)
 
-    holder.Bg = CreateFrame("Frame", nil, holder)
+    holder.Bg = CreateFrame("Frame", nil, holder, "BackdropTemplate")
     holder.Bg:SetPoint("TOPLEFT", 0, -18)
     holder.Bg:SetSize(width, 28)
-    MythicTools:ApplySurface(holder.Bg, COLORS.frameBG, COLORS.surface, nil)
+    holder.Bg:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    holder.Bg:SetBackdropColor(COLORS.frameBG[1], COLORS.frameBG[2], COLORS.frameBG[3], 1)
+    holder.Bg:SetBackdropBorderColor(0, 0, 0, 1)
 
     holder.Input = CreateFrame("EditBox", nil, holder.Bg, "InputBoxTemplate")
     holder.Input:SetPoint("TOPLEFT", 0, 0)
@@ -508,32 +499,31 @@ local function CreateLabeledEditBox(parent, labelText, width, onChanged)
 end
 
 local function CreateActionButton(parent, width, height, label)
-    local button = CreateFrame("Button", nil, parent)
+    local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
     button:SetSize(width, height)
-    MythicTools:ApplySurface(button, COLORS.rowBG, COLORS.surface, COLORS.accentSoft)
+    button:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    button:SetBackdropColor(COLORS.rowBG[1], COLORS.rowBG[2], COLORS.rowBG[3], 1)
+    button:SetBackdropBorderColor(0, 0, 0, 1)
 
     button.Text = CreateFont(button, 12, COLORS.text, "CENTER", "OVERLAY", "")
     button.Text:SetPoint("CENTER")
     button.Text:SetText(label)
 
-    button:SetHighlightTexture(WHITE_TEXTURE)
-    local highlight = button:GetHighlightTexture()
-    highlight:SetAllPoints()
-    highlight:SetVertexColor(1, 1, 1, 0.05)
-
     button._restyle = function(self)
         if self._selected then
-            MythicTools:ApplySurface(self, COLORS.rowSelected, COLORS.accentSoft, COLORS.accent)
+            button:SetBackdropColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.3)
+            button:SetBackdropBorderColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 1)
             SetTextColor(self.Text, COLORS.bright)
         else
-            MythicTools:ApplySurface(self, COLORS.rowBG, COLORS.surface, COLORS.accentSoft)
+            button:SetBackdropColor(COLORS.rowBG[1], COLORS.rowBG[2], COLORS.rowBG[3], 1)
+            button:SetBackdropBorderColor(0, 0, 0, 1)
             SetTextColor(self.Text, COLORS.text)
         end
     end
 
     button:SetScript("OnEnter", function(self)
         if not self._selected then
-            MythicTools:ApplySurface(self, COLORS.rowSelected, COLORS.surface, COLORS.accent)
+            button:SetBackdropColor(COLORS.rowSelected[1], COLORS.rowSelected[2], COLORS.rowSelected[3], 1)
             SetTextColor(self.Text, COLORS.bright)
         end
     end)
@@ -578,10 +568,14 @@ local function CreateDropdownControl(parent, labelText, width, getOptions, onCha
     holder.Label:SetPoint("TOPLEFT", 2, 0)
     holder.Label:SetText(labelText)
 
-    holder.Button = CreateFrame("Button", nil, holder)
+    holder.Button = CreateFrame("Button", nil, holder, "BackdropTemplate")
     holder.Button:SetPoint("TOPLEFT", 0, -18)
     holder.Button:SetSize(width, 28)
-    MythicTools:ApplySurface(holder.Button, COLORS.rowBG, COLORS.surface, COLORS.accentSoft)
+    holder.Button:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    holder.Button:SetBackdropColor(COLORS.rowBG[1], COLORS.rowBG[2], COLORS.rowBG[3], 1)
+    holder.Button:SetBackdropBorderColor(0, 0, 0, 1)
+    holder.Button:SetScript("OnEnter", function() holder.Button:SetBackdropColor(COLORS.rowSelected[1], COLORS.rowSelected[2], COLORS.rowSelected[3], 1) end)
+    holder.Button:SetScript("OnLeave", function() holder.Button:SetBackdropColor(COLORS.rowBG[1], COLORS.rowBG[2], COLORS.rowBG[3], 1) end)
 
     holder.Button.Text = CreateFont(holder.Button, 12, COLORS.text)
     holder.Button.Text:SetPoint("LEFT", 10, 0)
@@ -591,11 +585,6 @@ local function CreateDropdownControl(parent, labelText, width, getOptions, onCha
     holder.Button.Arrow = CreateFont(holder.Button, 11, COLORS.muted, "RIGHT")
     holder.Button.Arrow:SetPoint("RIGHT", -9, 0)
     holder.Button.Arrow:SetText("v")
-
-    holder.Button:SetHighlightTexture(WHITE_TEXTURE)
-    local highlight = holder.Button:GetHighlightTexture()
-    highlight:SetAllPoints()
-    highlight:SetVertexColor(1, 1, 1, 0.05)
 
     holder.Button:SetScript("OnClick", function(button)
         local menu = {}
@@ -1233,10 +1222,12 @@ end
 local function StyleTabButton(button, selected)
     button._selected = selected and true or false
     if selected then
-        MythicTools:ApplySurface(button, COLORS.rowSelected, COLORS.accentSoft, COLORS.accent)
+        button:SetBackdropColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.3)
+        button:SetBackdropBorderColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 1)
         SetTextColor(button.Text, COLORS.bright)
     else
-        MythicTools:ApplySurface(button, COLORS.rowBG, COLORS.surface, COLORS.accentSoft)
+        button:SetBackdropColor(COLORS.rowBG[1], COLORS.rowBG[2], COLORS.rowBG[3], 1)
+        button:SetBackdropBorderColor(0, 0, 0, 1)
         SetTextColor(button.Text, COLORS.text)
     end
 end
@@ -3578,21 +3569,31 @@ function MythicTools:BuildCompletionPopup()
     frame:SetPoint(point[1] or "CENTER", UIParent, point[2] or point[1] or "CENTER", point[3] or 0, point[4] or 40)
     table.insert(UISpecialFrames, frame:GetName())
 
-    local header = CreateFrame("Frame", nil, frame)
-    header:SetPoint("TOPLEFT", 14, -14)
-    header:SetPoint("TOPRIGHT", -14, -14)
+    local header = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
     header:SetHeight(116)
-    self:ApplySurface(header, COLORS.headerBG, COLORS.surface, COLORS.accent)
+    header:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    header:SetBackdropColor(COLORS.headerBG[1], COLORS.headerBG[2], COLORS.headerBG[3], 1)
+    header:SetBackdropBorderColor(0, 0, 0, 1)
 
-    header.Background = header:CreateTexture(nil, "BACKGROUND")
+    header.Background = header:CreateTexture(nil, "BACKGROUND", nil, 1)
     header.Background:SetAllPoints()
     header.Background:SetAlpha(0.18)
     self.completionPopupHeroBackground = header.Background
 
+    -- Linha accent na base do header do popup
+    local popupHeaderLine = header:CreateTexture(nil, "OVERLAY")
+    popupHeaderLine:SetTexture(WHITE_TEXTURE)
+    popupHeaderLine:SetPoint("BOTTOMLEFT", 1, 0)
+    popupHeaderLine:SetPoint("BOTTOMRIGHT", -1, 0)
+    popupHeaderLine:SetHeight(1)
+    popupHeaderLine:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.8)
+
     local iconFrame = CreateFrame("Frame", nil, header)
     iconFrame:SetSize(76, 76)
     iconFrame:SetPoint("TOPLEFT", 18, -18)
-    self:ApplySurface(iconFrame, COLORS.frameBG, COLORS.accentSoft, COLORS.accent)
+    self:ApplySurface(iconFrame, COLORS.frameBG, COLORS.surface, nil)
 
     iconFrame.Icon = iconFrame:CreateTexture(nil, "ARTWORK")
     iconFrame.Icon:SetPoint("TOPLEFT", 1, -1)
@@ -3620,14 +3621,30 @@ function MythicTools:BuildCompletionPopup()
 
     frame.Status = CreateFont(header, 14, COLORS.accent, "RIGHT")
 
-    local closeButton = CreateFrame("Button", nil, header, "UIPanelCloseButton")
-    closeButton:SetPoint("TOPRIGHT", 0, 0)
+    -- Botão fechar estilo Cell no popup
+    local closeButton = CreateFrame("Button", nil, header, "BackdropTemplate")
+    closeButton:SetSize(20, 20)
+    closeButton:SetPoint("TOPRIGHT", -8, -8)
+    closeButton:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    closeButton:SetBackdropColor(0.6, 0.1, 0.1, 0.6)
+    closeButton:SetBackdropBorderColor(0, 0, 0, 1)
+    closeButton:SetScript("OnEnter", function() closeButton:SetBackdropColor(0.6, 0.1, 0.1, 1) end)
+    closeButton:SetScript("OnLeave", function() closeButton:SetBackdropColor(0.6, 0.1, 0.1, 0.6) end)
     closeButton:SetScript("OnClick", function()
         MythicTools:HideCompletionPopup()
     end)
+    local closeText = closeButton:CreateFontString(nil, "OVERLAY")
+    closeText:SetFont(STANDARD_TEXT_FONT, 14, "")
+    closeText:SetText("×")
+    closeText:SetAllPoints()
+    closeText:SetJustifyH("CENTER")
+    closeText:SetJustifyV("MIDDLE")
+    closeText:SetTextColor(1, 1, 1, 1)
+    closeText:SetShadowColor(0, 0, 0)
+    closeText:SetShadowOffset(1, -1)
 
     local deleteButton = CreateActionButton(header, 92, 24, "Delete")
-    deleteButton:SetPoint("TOPRIGHT", closeButton, "TOPLEFT", -8, -2)
+    deleteButton:SetPoint("TOPRIGHT", closeButton, "TOPLEFT", -8, 0)
     deleteButton:SetScript("OnClick", function()
         local runId = frame and frame.runId
         if runId then
@@ -3996,37 +4013,49 @@ function MythicTools:BuildUI()
     table.insert(UISpecialFrames, frame:GetName())
     ui.frame = frame
 
-    local header = CreateFrame("Frame", nil, frame)
-    header:SetPoint("TOPLEFT", 14, -14)
-    header:SetPoint("TOPRIGHT", -14, -14)
-    header:SetHeight(72)
-    self:ApplySurface(header, COLORS.headerBG, COLORS.surface, COLORS.accent)
+    -- Header: estilo Cell — barra escura compacta com título na cor de classe
+    local header = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
+    header:SetHeight(36)
+    header:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    header:SetBackdropColor(COLORS.headerBG[1], COLORS.headerBG[2], COLORS.headerBG[3], 1)
+    header:SetBackdropBorderColor(0, 0, 0, 1)
 
-    local brandIconFrame = CreateFrame("Frame", nil, header)
-    brandIconFrame:SetSize(48, 48)
-    brandIconFrame:SetPoint("LEFT", 12, 0)
-    self:ApplySurface(brandIconFrame, COLORS.frameBG, COLORS.accentSoft, COLORS.accent)
+    -- Linha de destaque na cor de classe na base do header
+    local headerAccentLine = header:CreateTexture(nil, "OVERLAY")
+    headerAccentLine:SetTexture(WHITE_TEXTURE)
+    headerAccentLine:SetPoint("BOTTOMLEFT", 1, 0)
+    headerAccentLine:SetPoint("BOTTOMRIGHT", -1, 0)
+    headerAccentLine:SetHeight(1)
+    headerAccentLine:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.8)
 
-    local brandIcon = brandIconFrame:CreateTexture(nil, "ARTWORK")
-    brandIcon:SetPoint("TOPLEFT", 1, -1)
-    brandIcon:SetPoint("BOTTOMRIGHT", -1, 1)
-    brandIcon:SetTexture(DEFAULT_DUNGEON_ICON)
-    brandIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-    local title = CreateFont(header, 22, COLORS.text)
-    title:SetPoint("LEFT", brandIconFrame, "RIGHT", 14, 8)
+    local title = CreateFont(header, 13, COLORS.accent)
+    title:SetPoint("LEFT", 14, 0)
     title:SetText("Mythic Tools")
 
-    local subtitle = CreateFont(header, 11, COLORS.muted)
-    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
-    subtitle:SetText("Mythic+ social history with loot, completion popup, and fast filters")
-
-    local closeButton = CreateFrame("Button", nil, header, "UIPanelCloseButton")
-    closeButton:SetPoint("TOPRIGHT", 0, 0)
+    -- Botão fechar estilo Cell (× vermelho)
+    local closeButton = CreateFrame("Button", nil, header, "BackdropTemplate")
+    closeButton:SetSize(20, 20)
+    closeButton:SetPoint("RIGHT", -6, 0)
+    closeButton:SetBackdrop({bgFile = WHITE_TEXTURE, edgeFile = WHITE_TEXTURE, edgeSize = 1, insets = {left=1, right=1, top=1, bottom=1}})
+    closeButton:SetBackdropColor(0.6, 0.1, 0.1, 0.6)
+    closeButton:SetBackdropBorderColor(0, 0, 0, 1)
+    closeButton:SetScript("OnEnter", function() closeButton:SetBackdropColor(0.6, 0.1, 0.1, 1) end)
+    closeButton:SetScript("OnLeave", function() closeButton:SetBackdropColor(0.6, 0.1, 0.1, 0.6) end)
     closeButton:SetScript("OnClick", function()
         MythicTools:HideCompletionPopup()
         frame:Hide()
     end)
+    local closeText = closeButton:CreateFontString(nil, "OVERLAY")
+    closeText:SetFont(STANDARD_TEXT_FONT, 14, "")
+    closeText:SetText("×")
+    closeText:SetAllPoints()
+    closeText:SetJustifyH("CENTER")
+    closeText:SetJustifyV("MIDDLE")
+    closeText:SetTextColor(1, 1, 1, 1)
+    closeText:SetShadowColor(0, 0, 0)
+    closeText:SetShadowOffset(1, -1)
 
     frame:SetMovable(true)
     header:EnableMouse(true)
@@ -4039,20 +4068,28 @@ function MythicTools:BuildUI()
         self:StoreMainFramePoint()
     end)
 
+    -- Sidebar estilo Cell
     local sidebar = CreateFrame("Frame", nil, frame)
-    sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -12)
-    sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 14, 14)
-    sidebar:SetWidth(212)
+    sidebar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -8)
+    sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 1)
+    sidebar:SetWidth(204)
     self:ApplySurface(sidebar, COLORS.panelBG, COLORS.surface, COLORS.accentSoft)
 
-    local sidebarTitle = CreateFont(sidebar, 12, COLORS.subdued)
-    sidebarTitle:SetPoint("TOPLEFT", 16, -16)
+    -- Separador de navegação estilo Cell
+    local sidebarTitle = CreateFont(sidebar, 11, COLORS.accent)
+    sidebarTitle:SetPoint("TOPLEFT", 14, -14)
     sidebarTitle:SetText("Navigation")
+    local sidebarTitleLine = sidebar:CreateTexture(nil, "ARTWORK")
+    sidebarTitleLine:SetTexture(WHITE_TEXTURE)
+    sidebarTitleLine:SetPoint("TOPLEFT", sidebarTitle, "BOTTOMLEFT", 0, -3)
+    sidebarTitleLine:SetWidth(176)
+    sidebarTitleLine:SetHeight(1)
+    sidebarTitleLine:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.5)
 
     ui.tabButtons = {}
     for index, tabName in ipairs({"Runs", "Players", "Settings"}) do
-        local button = CreateActionButton(sidebar, 180, 34, tabName)
-        button:SetPoint("TOPLEFT", 16, -40 - ((index - 1) * 42))
+        local button = CreateActionButton(sidebar, 176, 30, tabName)
+        button:SetPoint("TOPLEFT", 14, -34 - ((index - 1) * 38))
         button:SetScript("OnClick", function()
             self:ShowTab(tabName)
         end)
@@ -4060,21 +4097,21 @@ function MythicTools:BuildUI()
     end
 
     ui.sidebarRuns = CreateSidebarMetric(sidebar, "Saved runs")
-    ui.sidebarRuns:SetPoint("TOPLEFT", 16, -182)
+    ui.sidebarRuns:SetPoint("TOPLEFT", 14, -162)
 
     ui.sidebarPlayers = CreateSidebarMetric(sidebar, "Indexed players")
-    ui.sidebarPlayers:SetPoint("TOPLEFT", 16, -244)
+    ui.sidebarPlayers:SetPoint("TOPLEFT", 14, -224)
 
     ui.sidebarStatus = CreateSidebarMetric(sidebar, "No active run")
-    ui.sidebarStatus:SetPoint("TOPLEFT", 16, -306)
+    ui.sidebarStatus:SetPoint("TOPLEFT", 14, -286)
 
     local footer = CreateFont(sidebar, 10, COLORS.subdued)
-    footer:SetPoint("BOTTOMLEFT", 16, 16)
+    footer:SetPoint("BOTTOMLEFT", 14, 12)
     footer:SetText(("v%s"):format(self.version or "0.3.0"))
 
     local content = CreateFrame("Frame", nil, frame)
-    content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 12, 0)
-    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
+    content:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
+    content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
     self:ApplySurface(content, COLORS.panelBG, COLORS.surface, nil)
     ClipChildren(content)
 
