@@ -31,6 +31,22 @@ local COMPACT_STATS_DEATHS_X = 848
 local COMPACT_STATS_LOOT_ICON_SIZE = 26
 local COMPACT_STATS_LOOT_SPACING = 4
 
+local MAX_STATS_DUNGEON_ROWS = 12
+local MAX_STATS_CLASS_ROWS = 13
+local MAX_STATS_TEAMMATE_ROWS = 10
+local STATS_BAR_H = 8
+local STATS_DUNGEON_ROW_H = 30
+local STATS_CLASS_ROW_H = 28
+local STATS_TEAMMATE_ROW_H = 34
+local STATS_SECTION_TITLE_H = 40
+local STATS_PAD = 12
+local STATS_OVERVIEW_H = 80
+local STATS_DUNGEON_SECTION_H = STATS_SECTION_TITLE_H + MAX_STATS_DUNGEON_ROWS * STATS_DUNGEON_ROW_H + STATS_PAD
+local STATS_CLASS_SECTION_H = STATS_SECTION_TITLE_H + MAX_STATS_CLASS_ROWS * STATS_CLASS_ROW_H + STATS_PAD
+local STATS_TWOCOL_H = (STATS_CLASS_SECTION_H > STATS_DUNGEON_SECTION_H) and STATS_CLASS_SECTION_H or STATS_DUNGEON_SECTION_H
+local STATS_TEAMMATE_SECTION_H = STATS_SECTION_TITLE_H + MAX_STATS_TEAMMATE_ROWS * STATS_TEAMMATE_ROW_H + STATS_PAD
+local STATS_CONTENT_H = STATS_PAD + STATS_OVERVIEW_H + STATS_PAD + STATS_DUNGEON_SECTION_H + STATS_PAD + STATS_TWOCOL_H + STATS_PAD + STATS_TEAMMATE_SECTION_H + STATS_PAD
+
 local cos = math.cos
 local sin = math.sin
 local rad = math.rad
@@ -1491,6 +1507,7 @@ function MythicTools:GetFilteredPlayers()
                 best = "bestTimedLevel",
                 average = "averageLevel",
                 maxdps = "maxDps",
+                avgdps = "averageDps",
             }
             local key = keyMap[sortState.column] or "totalRuns"
             leftValue = tonumber(left[key]) or 0
@@ -1707,6 +1724,7 @@ function MythicTools:BuildPlayerAnalyticsTableData(players)
                 {value = playerEntry.bestTimedLevel or 0, display = tostring(playerEntry.bestTimedLevel or 0)},
                 {value = playerEntry.averageLevel or 0, display = string.format("%.1f", playerEntry.averageLevel or 0)},
                 {value = playerEntry.maxDps or 0, display = self:FormatAmount(playerEntry.maxDps or 0)},
+                {value = playerEntry.averageDps or 0, display = self:FormatAmount(playerEntry.averageDps or 0)},
             }
         }
     end
@@ -1730,6 +1748,7 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         {name = "Best", width = 48, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Average", width = 58, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Max DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
+        {name = "Avg DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
     }
 
     local windowHeight = (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.height) or 760
@@ -1752,6 +1771,7 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         [8] = "best",
         [9] = "average",
         [10] = "maxdps",
+        [11] = "avgdps",
     }
 
     tableWidget:RegisterEvents({
@@ -1807,6 +1827,7 @@ function MythicTools:ApplyPlayersTableSortState()
         best = 8,
         average = 9,
         maxdps = 10,
+        avgdps = 11,
     }
     local selectedIndex = columnIndexByKey[sortState.column] or 3
 
@@ -2582,6 +2603,7 @@ function MythicTools:RefreshUI()
     self:RefreshRunView()
     self:RefreshPlayersView()
     self:RefreshSettingsView()
+    self:RefreshStatsView()
 end
 
 function MythicTools:RefreshRunView()
@@ -2899,6 +2921,485 @@ function MythicTools:RefreshSettingsView()
         self:GetCompletionPopupScale()
     ))
 end
+local function FormatTotalTime(ms)
+    if not ms or ms <= 0 then return "--" end
+    local s = floor(ms / 1000)
+    local d = floor(s / 86400)
+    local h = floor((s % 86400) / 3600)
+    local m = floor((s % 3600) / 60)
+    if d > 0 then return ("%dd %dh"):format(d, h)
+    elseif h > 0 then return ("%dh %dm"):format(h, m)
+    else return ("%dm"):format(m) end
+end
+
+local function CreateStatsTitleBar(parent, labelText)
+    local title = CreateFont(parent, 13, COLORS.text)
+    title:SetPoint("TOPLEFT", 16, -12)
+    title:SetText(labelText)
+    local line = parent:CreateTexture(nil, "ARTWORK")
+    line:SetTexture(WHITE_TEXTURE)
+    line:SetPoint("BOTTOMLEFT", title, "BOTTOMLEFT", 0, -4)
+    line:SetPoint("BOTTOMRIGHT", title, "BOTTOMRIGHT", 0, -4)
+    line:SetHeight(1)
+    line:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.4)
+    return title
+end
+
+local function CreateStatsCard(parent, y, w, h)
+    local card = CreateFrame("Frame", nil, parent)
+    card:SetPoint("TOPLEFT", STATS_PAD, y)
+    card:SetSize(w, h)
+    MythicTools:ApplySurface(card, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
+    ClipChildren(card)
+    return card
+end
+
+local function UpdateDungeonRowBar(row, d, maxCount)
+    local barW = row.barW or 200
+    local fill = maxCount > 0 and (barW * d.count / maxCount) or 0
+    local tw = d.count > 0 and (fill * d.timed / d.count) or 0
+    local ow = d.count > 0 and (fill * d.overtime / d.count) or 0
+    local aw = d.count > 0 and (fill * d.abandoned / d.count) or 0
+    row.BarTimed:SetWidth(max(0, tw))
+    row.BarOT:ClearAllPoints()
+    row.BarOT:SetPoint("TOPLEFT", row.BarTimed, "TOPRIGHT", 0, 0)
+    row.BarOT:SetWidth(max(0, ow))
+    row.BarAb:ClearAllPoints()
+    row.BarAb:SetPoint("TOPLEFT", row.BarOT, "TOPRIGHT", 0, 0)
+    row.BarAb:SetWidth(max(0, aw))
+end
+
+local function CreateStatsDungeonRow(parent, index, rowW)
+    local row = CreateFrame("Frame", nil, parent)
+    local rowY = -((index - 1) * STATS_DUNGEON_ROW_H + STATS_SECTION_TITLE_H)
+    row:SetPoint("TOPLEFT", 0, rowY)
+    row:SetSize(rowW, STATS_DUNGEON_ROW_H)
+    row:Hide()
+    if index % 2 == 0 then
+        local bg = row:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetTexture(WHITE_TEXTURE)
+        bg:SetVertexColor(0.07, 0.07, 0.07, 1)
+    end
+    row.Name = CreateFont(row, 11, COLORS.text)
+    row.Name:SetPoint("LEFT", 16, 0)
+    row.Name:SetWidth(196)
+    row.Count = CreateFont(row, 11, COLORS.accent, "RIGHT")
+    row.Count:SetPoint("RIGHT", -16, 0)
+    row.Count:SetWidth(40)
+    row.Status = CreateFont(row, 9, COLORS.subdued, "RIGHT")
+    row.Status:SetPoint("RIGHT", row.Count, "LEFT", -6, 0)
+    row.Status:SetWidth(140)
+    -- barW: rowW minus fixed left/right elements
+    -- LEFT(16) + nameW(196) + gap(10) + [bar] + gap(10) + statusW(140) + gap(6) + countW(40) + RIGHT(16)
+    local barW = max(10, rowW - 434)
+    row.barW = barW
+    local barHolder = CreateFrame("Frame", nil, row)
+    barHolder:SetSize(barW, STATS_BAR_H)
+    barHolder:SetPoint("LEFT", row.Name, "RIGHT", 10, 0)
+    local barBg = barHolder:CreateTexture(nil, "BACKGROUND")
+    barBg:SetAllPoints()
+    barBg:SetTexture(WHITE_TEXTURE)
+    barBg:SetVertexColor(0.07, 0.07, 0.07, 1)
+    row.BarTimed = barHolder:CreateTexture(nil, "ARTWORK")
+    row.BarTimed:SetTexture(WHITE_TEXTURE)
+    row.BarTimed:SetVertexColor(COLORS.success[1], COLORS.success[2], COLORS.success[3], 0.85)
+    row.BarTimed:SetPoint("TOPLEFT")
+    row.BarTimed:SetHeight(STATS_BAR_H)
+    row.BarTimed:SetWidth(0)
+    row.BarOT = barHolder:CreateTexture(nil, "ARTWORK")
+    row.BarOT:SetTexture(WHITE_TEXTURE)
+    row.BarOT:SetVertexColor(COLORS.warning[1], COLORS.warning[2], COLORS.warning[3], 0.85)
+    row.BarOT:SetPoint("TOPLEFT", row.BarTimed, "TOPRIGHT", 0, 0)
+    row.BarOT:SetHeight(STATS_BAR_H)
+    row.BarOT:SetWidth(0)
+    row.BarAb = barHolder:CreateTexture(nil, "ARTWORK")
+    row.BarAb:SetTexture(WHITE_TEXTURE)
+    row.BarAb:SetVertexColor(COLORS.danger[1], COLORS.danger[2], COLORS.danger[3], 0.85)
+    row.BarAb:SetPoint("TOPLEFT", row.BarOT, "TOPRIGHT", 0, 0)
+    row.BarAb:SetHeight(STATS_BAR_H)
+    row.BarAb:SetWidth(0)
+    row.BarHolder = barHolder
+    return row
+end
+
+function MythicTools:ComputeStatsData()
+    local runs = (self.db and self.db.runs) or {}
+    local total = #runs
+    local timed, overtime, abandoned = 0, 0, 0
+    local totalLevel, countedLevel, bestTimed = 0, 0, 0
+    local totalTimeMS, totalDeaths = 0, 0
+    local dungeons, classes, teammates = {}, {}, {}
+
+    for _, run in ipairs(runs) do
+        if type(run) == "table" then
+            local result = run.result or "abandoned"
+            local isAbandoned = result == "abandoned"
+            local isTimed = result == "timed"
+            if isTimed then timed = timed + 1
+            elseif isAbandoned then abandoned = abandoned + 1
+            else overtime = overtime + 1 end
+            if not isAbandoned and (run.level or 0) > 0 then
+                totalLevel = totalLevel + run.level
+                countedLevel = countedLevel + 1
+            end
+            if isTimed and (run.level or 0) > bestTimed then bestTimed = run.level end
+            if not isAbandoned then totalTimeMS = totalTimeMS + (run.timeMS or 0) end
+            totalDeaths = totalDeaths + (run.totalDeaths or 0)
+            local dName = type(run.dungeonName) == "string" and run.dungeonName ~= "" and run.dungeonName
+            if dName then
+                if not dungeons[dName] then
+                    dungeons[dName] = {name=dName, count=0, timed=0, overtime=0, abandoned=0, totalTimeMS=0, countedTime=0}
+                end
+                local d = dungeons[dName]
+                d.count = d.count + 1
+                if isTimed then d.timed = d.timed + 1
+                elseif isAbandoned then d.abandoned = d.abandoned + 1
+                else d.overtime = d.overtime + 1 end
+                if not isAbandoned and (run.timeMS or 0) > 0 then
+                    d.totalTimeMS = d.totalTimeMS + run.timeMS
+                    d.countedTime = d.countedTime + 1
+                end
+            end
+            for playerName, stat in pairs(run.playerStats or {}) do
+                if type(stat) == "table" and not self:IsOwnedCharacter(playerName) then
+                    if stat.classFilename then
+                        classes[stat.classFilename] = (classes[stat.classFilename] or 0) + 1
+                    end
+                    local sn = stat.shortName or self:GetShortName(playerName)
+                    if sn and sn ~= "" then
+                        if not teammates[sn] then
+                            teammates[sn] = {name=sn, count=0, classFilename=stat.classFilename}
+                        end
+                        teammates[sn].count = teammates[sn].count + 1
+                        if stat.classFilename then teammates[sn].classFilename = stat.classFilename end
+                    end
+                end
+            end
+        end
+    end
+
+    local sortedDungeons = {}
+    for _, d in pairs(dungeons) do
+        d.avgTimeMS = d.countedTime > 0 and (d.totalTimeMS / d.countedTime) or 0
+        sortedDungeons[#sortedDungeons + 1] = d
+    end
+    table.sort(sortedDungeons, function(a, b) return a.count > b.count end)
+
+    local sortedClasses = {}
+    for cf, cnt in pairs(classes) do
+        sortedClasses[#sortedClasses + 1] = {classFilename=cf, count=cnt}
+    end
+    table.sort(sortedClasses, function(a, b) return a.count > b.count end)
+
+    local sortedTeammates = {}
+    for _, t in pairs(teammates) do sortedTeammates[#sortedTeammates + 1] = t end
+    table.sort(sortedTeammates, function(a, b) return a.count > b.count end)
+
+    return {
+        total = total, timed = timed, overtime = overtime, abandoned = abandoned,
+        timedPct = total > 0 and (timed / total * 100) or 0,
+        avgLevel = countedLevel > 0 and (totalLevel / countedLevel) or 0,
+        bestTimed = bestTimed, totalTimeMS = totalTimeMS, totalDeaths = totalDeaths,
+        dungeons = sortedDungeons, classes = sortedClasses, teammates = sortedTeammates,
+    }
+end
+
+function MythicTools:BuildStatsPage(parent)
+    local page = CreateFrame("Frame", nil, parent)
+    page:SetAllPoints(parent)
+    ClipChildren(page)
+
+    -- Header
+    local headerCard = CreateFrame("Frame", nil, page)
+    headerCard:SetPoint("TOPLEFT", 12, -12)
+    headerCard:SetPoint("TOPRIGHT", -12, -12)
+    headerCard:SetHeight(38)
+    self:ApplySurface(headerCard, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
+    local headerTitle = CreateFont(headerCard, 13, COLORS.accent)
+    headerTitle:SetPoint("LEFT", 16, 0)
+    headerTitle:SetText("Statistics")
+
+    -- Scroll frame
+    local scrollFrame = CreateFrame("ScrollFrame", nil, page)
+    scrollFrame:SetPoint("TOPLEFT", 12, -62)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -20, 12)
+    scrollFrame:EnableMouseWheel(true)
+    self.ui.statsScrollFrame = scrollFrame
+
+    -- Explicit content width: SetScrollChild breaks TOPRIGHT anchors (they resolve to 0).
+    -- Derive from saved frame width: pageW = frameW - sidebarW(213), scrollFrame inset = 12+20 = 32
+    local frameW = (self.db and self.db.ui and self.db.ui.width) or 1080
+    local scrollW = max(600, frameW - 245)
+    local sectionW = scrollW - 2 * STATS_PAD
+    local leftColW = floor(sectionW * 0.37)
+    local rightColW = sectionW - leftColW - STATS_PAD
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(scrollW, STATS_CONTENT_H)
+    scrollFrame:SetScrollChild(content)
+    self.ui.statsContent = content
+
+    -- Thin scrollbar
+    local scrollBar = CreateFrame("Slider", nil, page)
+    scrollBar:SetOrientation("VERTICAL")
+    scrollBar:SetWidth(6)
+    scrollBar:SetPoint("TOPRIGHT", page, "TOPRIGHT", -12, -62)
+    scrollBar:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -12, 12)
+    scrollBar:SetMinMaxValues(0, 1)
+    scrollBar:SetValue(0)
+    scrollBar:Hide()
+    local sbThumb = scrollBar:CreateTexture(nil, "ARTWORK")
+    sbThumb:SetTexture(WHITE_TEXTURE)
+    sbThumb:SetWidth(4)
+    sbThumb:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.65)
+    scrollBar:SetThumbTexture(sbThumb)
+    scrollBar:SetScript("OnValueChanged", function(self, value)
+        scrollFrame:SetVerticalScroll(value)
+    end)
+    scrollFrame:SetScript("OnScrollRangeChanged", function(self, _, yRange)
+        local m = max(0, yRange)
+        scrollBar:SetMinMaxValues(0, m)
+        scrollBar:SetShown(m > 0)
+    end)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local cur = scrollBar:GetValue()
+        local _, maxVal = scrollBar:GetMinMaxValues()
+        scrollBar:SetValue(max(0, min(cur - delta * 60, maxVal)))
+    end)
+    self.ui.statsScrollBar = scrollBar
+
+    local y = -STATS_PAD
+
+    -- ── SECTION 1: OVERVIEW ──────────────────────────────────────────────
+    local OVERVIEW_LABELS = {"Total Runs", "Timed %", "Avg Key", "Best Key", "In-Key Time", "Deaths"}
+    local NUM_OV = #OVERVIEW_LABELS
+    local ovGap = 8
+    local ovCardW = floor((sectionW - (NUM_OV - 1) * ovGap) / NUM_OV)
+    local overviewRow = CreateFrame("Frame", nil, content)
+    overviewRow:SetPoint("TOPLEFT", STATS_PAD, y)
+    overviewRow:SetSize(sectionW, STATS_OVERVIEW_H)
+    self.ui.statsOverviewCards = {}
+    for i = 1, NUM_OV do
+        local card = CreateFrame("Frame", nil, overviewRow)
+        self:ApplySurface(card, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
+        card:SetPoint("TOPLEFT", (i - 1) * (ovCardW + ovGap), 0)
+        card:SetSize(ovCardW, STATS_OVERVIEW_H)
+        card.Value = CreateFont(card, 22, COLORS.text, "CENTER")
+        card.Value:SetPoint("CENTER", 0, 12)
+        card.Value:SetText("--")
+        card.Label = CreateFont(card, 10, COLORS.subdued, "CENTER")
+        card.Label:SetPoint("CENTER", 0, -12)
+        card.Label:SetText(OVERVIEW_LABELS[i])
+        self.ui.statsOverviewCards[i] = card
+    end
+
+    y = y - STATS_OVERVIEW_H - STATS_PAD
+
+    -- ── SECTION 2: MOST PLAYED DUNGEONS ──────────────────────────────────
+    local dungeonsCard = CreateStatsCard(content, y, sectionW, STATS_DUNGEON_SECTION_H)
+    CreateStatsTitleBar(dungeonsCard, "Most Played Dungeons")
+    self.ui.statsDungeonRows = {}
+    for i = 1, MAX_STATS_DUNGEON_ROWS do
+        self.ui.statsDungeonRows[i] = CreateStatsDungeonRow(dungeonsCard, i, sectionW)
+    end
+
+    y = y - STATS_DUNGEON_SECTION_H - STATS_PAD
+
+    -- ── SECTION 3: TWO COLUMNS ────────────────────────────────────────────
+    -- Left: Team Classes
+    local classesCard = CreateFrame("Frame", nil, content)
+    classesCard:SetPoint("TOPLEFT", STATS_PAD, y)
+    classesCard:SetSize(leftColW, STATS_TWOCOL_H)
+    self:ApplySurface(classesCard, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
+    ClipChildren(classesCard)
+    CreateStatsTitleBar(classesCard, "Team Classes")
+    self.ui.statsClassRows = {}
+    for i = 1, MAX_STATS_CLASS_ROWS do
+        local row = CreateFrame("Frame", nil, classesCard)
+        local rowY = -((i - 1) * STATS_CLASS_ROW_H + STATS_SECTION_TITLE_H)
+        row:SetPoint("TOPLEFT", 0, rowY)
+        row:SetSize(leftColW, STATS_CLASS_ROW_H)
+        row:Hide()
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetTexture(WHITE_TEXTURE)
+            bg:SetVertexColor(0.07, 0.07, 0.07, 1)
+        end
+        row.Dot = row:CreateTexture(nil, "ARTWORK")
+        row.Dot:SetTexture(WHITE_TEXTURE)
+        row.Dot:SetSize(9, 9)
+        row.Dot:SetPoint("LEFT", 16, 0)
+        row.Name = CreateFont(row, 11, COLORS.text)
+        row.Name:SetPoint("LEFT", row.Dot, "RIGHT", 8, 0)
+        row.Name:SetWidth(130)
+        row.Count = CreateFont(row, 11, COLORS.accent, "RIGHT")
+        row.Count:SetPoint("RIGHT", -16, 0)
+        self.ui.statsClassRows[i] = row
+    end
+
+    -- Right: Avg Completion Time (TOPLEFT anchor from left col edge, explicit size)
+    local avgTimeCard = CreateFrame("Frame", nil, content)
+    avgTimeCard:SetPoint("TOPLEFT", STATS_PAD + leftColW + STATS_PAD, y)
+    avgTimeCard:SetSize(rightColW, STATS_TWOCOL_H)
+    self:ApplySurface(avgTimeCard, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
+    ClipChildren(avgTimeCard)
+    CreateStatsTitleBar(avgTimeCard, "Avg Completion Time")
+    self.ui.statsAvgTimeRows = {}
+    for i = 1, MAX_STATS_DUNGEON_ROWS do
+        local row = CreateFrame("Frame", nil, avgTimeCard)
+        local rowY = -((i - 1) * STATS_DUNGEON_ROW_H + STATS_SECTION_TITLE_H)
+        row:SetPoint("TOPLEFT", 0, rowY)
+        row:SetSize(rightColW, STATS_DUNGEON_ROW_H)
+        row:Hide()
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetTexture(WHITE_TEXTURE)
+            bg:SetVertexColor(0.07, 0.07, 0.07, 1)
+        end
+        row.Name = CreateFont(row, 11, COLORS.text)
+        row.Name:SetPoint("LEFT", 16, 0)
+        row.Name:SetWidth(200)
+        row.Time = CreateFont(row, 12, COLORS.accent, "RIGHT")
+        row.Time:SetPoint("RIGHT", -16, 0)
+        self.ui.statsAvgTimeRows[i] = row
+    end
+
+    y = y - STATS_TWOCOL_H - STATS_PAD
+
+    -- ── SECTION 4: MOST PLAYED WITH ───────────────────────────────────────
+    local teammatesCard = CreateStatsCard(content, y, sectionW, STATS_TEAMMATE_SECTION_H)
+    CreateStatsTitleBar(teammatesCard, "Most Played With")
+    self.ui.statsTeammateRows = {}
+    for i = 1, MAX_STATS_TEAMMATE_ROWS do
+        local row = CreateFrame("Frame", nil, teammatesCard)
+        local rowY = -((i - 1) * STATS_TEAMMATE_ROW_H + STATS_SECTION_TITLE_H)
+        row:SetPoint("TOPLEFT", 0, rowY)
+        row:SetSize(sectionW, STATS_TEAMMATE_ROW_H)
+        row:Hide()
+        if i % 2 == 0 then
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetTexture(WHITE_TEXTURE)
+            bg:SetVertexColor(0.07, 0.07, 0.07, 1)
+        end
+        local rankBg = CreateFrame("Frame", nil, row)
+        rankBg:SetSize(22, 22)
+        rankBg:SetPoint("LEFT", 14, 0)
+        MythicTools:ApplySurface(rankBg, COLORS.frameBG, COLORS.surface, nil)
+        row.Rank = CreateFont(rankBg, 9, COLORS.subdued, "CENTER")
+        row.Rank:SetAllPoints()
+        row.Rank:SetText(tostring(i))
+        row.Dot = row:CreateTexture(nil, "ARTWORK")
+        row.Dot:SetTexture(WHITE_TEXTURE)
+        row.Dot:SetSize(10, 10)
+        row.Dot:SetPoint("LEFT", rankBg, "RIGHT", 10, 0)
+        row.Name = CreateFont(row, 12, COLORS.text)
+        row.Name:SetPoint("LEFT", row.Dot, "RIGHT", 8, 0)
+        row.Name:SetWidth(200)
+        row.Class = CreateFont(row, 10, COLORS.subdued)
+        row.Class:SetPoint("LEFT", row.Name, "RIGHT", 10, 0)
+        row.Class:SetWidth(110)
+        row.Runs = CreateFont(row, 12, COLORS.accent, "RIGHT")
+        row.Runs:SetPoint("RIGHT", -16, 0)
+        self.ui.statsTeammateRows[i] = row
+    end
+
+    return page
+end
+
+function MythicTools:RefreshStatsView()
+    if not (self.ui and self.ui.statsContent) then return end
+    if not (self.ui.pages and self.ui.pages.Stats and self.ui.pages.Stats:IsShown()) then return end
+
+    local data = self:ComputeStatsData()
+
+    -- Overview
+    local cards = self.ui.statsOverviewCards
+    if cards then
+        local function sv(i, val) if cards[i] then cards[i].Value:SetText(val) end end
+        sv(1, tostring(data.total))
+        sv(2, data.total > 0 and string.format("%.1f%%", data.timedPct) or "--")
+        sv(3, data.avgLevel > 0 and string.format("%.1f", data.avgLevel) or "--")
+        sv(4, data.bestTimed > 0 and ("+%d"):format(data.bestTimed) or "--")
+        sv(5, FormatTotalTime(data.totalTimeMS))
+        sv(6, tostring(data.totalDeaths))
+    end
+
+    -- Dungeon rows
+    local maxDungCount = (data.dungeons[1] and data.dungeons[1].count) or 1
+    for i, row in ipairs(self.ui.statsDungeonRows or {}) do
+        local d = data.dungeons[i]
+        if d then
+            row.Name:SetText(d.name)
+            row.Count:SetText(tostring(d.count))
+            row.Status:SetText(("T:%d  OT:%d  Ab:%d"):format(d.timed, d.overtime, d.abandoned))
+            UpdateDungeonRowBar(row, d, maxDungCount)
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    -- Class rows
+    for i, row in ipairs(self.ui.statsClassRows or {}) do
+        local c = data.classes[i]
+        if c then
+            local localName = (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[c.classFilename]) or c.classFilename or "?"
+            local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[c.classFilename]
+            if cc then
+                row.Dot:SetVertexColor(cc.r, cc.g, cc.b, 1)
+                SetTextColor(row.Name, {cc.r, cc.g, cc.b, 1})
+            else
+                row.Dot:SetVertexColor(0.7, 0.7, 0.7, 1)
+                SetTextColor(row.Name, COLORS.text)
+            end
+            row.Name:SetText(localName)
+            row.Count:SetText(tostring(c.count))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    -- Avg time rows (same dungeon order)
+    for i, row in ipairs(self.ui.statsAvgTimeRows or {}) do
+        local d = data.dungeons[i]
+        if d then
+            row.Name:SetText(d.name)
+            row.Time:SetText(d.avgTimeMS > 0 and self:FormatDurationMS(d.avgTimeMS) or "--")
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    -- Teammate rows
+    for i, row in ipairs(self.ui.statsTeammateRows or {}) do
+        local t = data.teammates[i]
+        if t then
+            local cc = t.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[t.classFilename]
+            if cc then
+                row.Dot:SetVertexColor(cc.r, cc.g, cc.b, 1)
+            else
+                row.Dot:SetVertexColor(0.6, 0.6, 0.6, 1)
+            end
+            row.Name:SetText(t.name)
+            local localClass = (t.classFilename and LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[t.classFilename]) or ""
+            row.Class:SetText(localClass)
+            row.Runs:SetText(("%d runs"):format(t.count))
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+
+    if self.ui.statsScrollFrame then self.ui.statsScrollFrame:SetVerticalScroll(0) end
+    if self.ui.statsScrollBar then self.ui.statsScrollBar:SetValue(0) end
+end
+
 function MythicTools:BuildRunsPage(parent)
     local page = CreateFrame("Frame", nil, parent)
     page:SetAllPoints(parent)
@@ -4187,7 +4688,7 @@ function MythicTools:BuildUI()
     sidebarTitleLine:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.5)
 
     ui.tabButtons = {}
-    for index, tabName in ipairs({"Runs", "Players", "Settings"}) do
+    for index, tabName in ipairs({"Runs", "Players", "Stats", "Settings"}) do
         local button = CreateActionButton(sidebar, 176, 30, tabName)
         button:SetPoint("TOPLEFT", 14, -34 - ((index - 1) * 38))
         button:SetScript("OnClick", function()
@@ -4201,13 +4702,13 @@ function MythicTools:BuildUI()
     end
 
     ui.sidebarRuns = CreateSidebarMetric(sidebar, "Saved runs")
-    ui.sidebarRuns:SetPoint("TOPLEFT", 14, -162)
+    ui.sidebarRuns:SetPoint("TOPLEFT", 14, -200)
 
     ui.sidebarPlayers = CreateSidebarMetric(sidebar, "Indexed players")
-    ui.sidebarPlayers:SetPoint("TOPLEFT", 14, -224)
+    ui.sidebarPlayers:SetPoint("TOPLEFT", 14, -262)
 
     ui.sidebarStatus = CreateSidebarMetric(sidebar, "No active run")
-    ui.sidebarStatus:SetPoint("TOPLEFT", 14, -286)
+    ui.sidebarStatus:SetPoint("TOPLEFT", 14, -324)
 
     local footer = CreateFont(sidebar, 10, COLORS.subdued)
     footer:SetPoint("BOTTOMLEFT", 14, 12)
@@ -4222,6 +4723,7 @@ function MythicTools:BuildUI()
     ui.pages = {}
     ui.pages.Runs = self:BuildRunsPage(content)
     ui.pages.Players = self:BuildPlayersPage(content)
+    ui.pages.Stats = self:BuildStatsPage(content)
     ui.pages.Settings = self:BuildSettingsPage(content)
 
     for pageName, page in pairs(ui.pages) do
