@@ -1552,11 +1552,21 @@ local function GetRunScoreText(run)
 end
 
 local function GetPlayerScoreDisplayText(stat)
-    return FormatScoreWithDelta(stat and stat.score, stat and stat.previousScore)
+    local score = tonumber(stat and stat.score) or 0
+    if score > 0 then
+        return FormatScoreWithDelta(score, stat and stat.previousScore)
+    end
+
+    local previousScore = tonumber(stat and stat.previousScore) or 0
+    if previousScore > 0 then
+        return FormatScoreNumber(previousScore)
+    end
+
+    return ""
 end
 
 local function GetPlayerScoreColor(stat)
-    local score = tonumber(stat and stat.score) or 0
+    local score = tonumber(stat and stat.score) or tonumber(stat and stat.previousScore) or 0
     if score <= 0 or not C_ChallengeMode or not C_ChallengeMode.GetDungeonScoreRarityColor then
         return COLORS.text
     end
@@ -1591,7 +1601,7 @@ local function GetRunStatsSourceText(run)
         return "Stats Details! totals"
     end
     if source == "damage_meter" then
-        return "Stats Blizzard meter"
+        return ""
     end
     if run and run.statsUnavailable then
         return "Stats unavailable"
@@ -3786,7 +3796,10 @@ function MythicTools:RefreshCompletionPopup()
     if outOfCombatText ~= "" then
         submeta = submeta .. ("  •  %s"):format(outOfCombatText)
     end
-    submeta = submeta .. ("  •  %s"):format(GetRunStatsSourceText(run))
+    local statsSourceText = GetRunStatsSourceText(run)
+    if statsSourceText ~= "" then
+        submeta = submeta .. ("  •  %s"):format(statsSourceText)
+    end
     frame.Submeta:SetText(submeta)
     frame.Status:SetText(GetRunStatusText(run))
     SetTextColor(frame.Status, GetRunStatusColor(run))

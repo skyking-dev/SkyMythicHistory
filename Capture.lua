@@ -816,6 +816,50 @@ local function GetObservedPlayerMythicScore(fullName)
     return nil
 end
 
+function MythicTools:RefreshObservedScoreForStat(stat, fullName)
+    if type(stat) ~= "table" or type(fullName) ~= "string" or fullName == "" then
+        return false
+    end
+
+    local changed = false
+    local observedScore = GetObservedPlayerMythicScore(fullName)
+    if observedScore and observedScore > 0 then
+        if (tonumber(stat.previousScore) or 0) <= 0 then
+            stat.previousScore = observedScore
+            changed = true
+        end
+        if (tonumber(stat.score) or 0) <= 0 then
+            stat.score = observedScore
+            changed = true
+        end
+        return changed
+    end
+
+    local previousScore = tonumber(stat.previousScore) or 0
+    if previousScore > 0 and (tonumber(stat.score) or 0) <= 0 then
+        stat.score = previousScore
+        return true
+    end
+
+    return changed
+end
+
+function MythicTools:HydrateObservedScoresForTarget(target)
+    if type(target) ~= "table" or type(target.playerStats) ~= "table" then
+        return false
+    end
+
+    local changed = false
+    for _, fullName in ipairs(self:GetRosterNamesForTarget(target)) do
+        local stat = target.playerStats[fullName]
+        if type(stat) == "table" and self:RefreshObservedScoreForStat(stat, fullName) then
+            changed = true
+        end
+    end
+
+    return changed
+end
+
 local function GetCombatSourceTotalAmount(source)
     if type(source) ~= "table" then
         return 0
@@ -1304,15 +1348,7 @@ function MythicTools:AddParticipantToActiveRun(activeRun, playerInfo)
         stat.classFilename = playerInfo.classFilename
     end
 
-    local observedScore = GetObservedPlayerMythicScore(fullName)
-    if observedScore then
-        if stat.previousScore == nil then
-            stat.previousScore = observedScore
-        end
-        if stat.score == nil then
-            stat.score = observedScore
-        end
-    end
+    self:RefreshObservedScoreForStat(stat, fullName)
 
     if not stat.role and playerInfo.role then
         stat.role = self:NormalizeRole(playerInfo.role)
@@ -1528,7 +1564,9 @@ function MythicTools:BeginActiveRunCompletion(trigger, completionInfo, source)
         self:FinalizeActiveRun(0)
     end
 
-    self:UpdateActiveRunSnapshot(activeRun)
+    if self.runtime and self.runtime.activeRun == activeRun then
+        self:UpdateActiveRunSnapshot(activeRun)
+    end
 
     return activeRun
 end
@@ -2617,6 +2655,16 @@ function MythicTools:ResolvePlayerNameForTarget(target, rawName)
         return nil
     end
 
+    local linkedName = rawName:match("|Hplayer:([^:|]+)")
+    if linkedName and linkedName ~= "" then
+        rawName = linkedName
+    else
+        local bracketName = rawName:match("|h%[(.-)%]|h")
+        if bracketName and bracketName ~= "" then
+            rawName = bracketName
+        end
+    end
+
     if target.playerStats and target.playerStats[rawName] then
         return rawName
     end
@@ -2812,6 +2860,129 @@ local function ExtractLootLinkFromChatMessage(message)
         or message:match("(|Hitem:.-|h%[.-%]|h)")
 end
 
+local function EscapeLuaPattern(text)
+    return (text:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function BuildLootMessagePattern(template, captureStringArgumentIndex)
+    if type(template) ~= "string" or template == "" then
+        return nil
+    end
+
+    local parts = {}
+    local index = 1
+    local sequentialStringIndex = 0
+
+    while index <= #template do
+        local startPos, endPos, positionalIndex, valueType = template:find("%%(%d+)%$([sd])", index)
+        local isPositional = startPos ~= nil
+        if not isPositional then
+            startPos, endPos, valueType = template:find("%%([sd])", index)
+        end
+
+        if not startPos then
+            parts[#parts + 1] = EscapeLuaPattern(template:sub(index))
+            break
+        end
+
+        if startPos > index then
+            parts[#parts + 1] = EscapeLuaPattern(template:sub(index, startPos - 1))
+        end
+
+        local argumentIndex = tonumber(positionalIndex)
+        if not argumentIndex and valueType == "s" then
+            sequentialStringIndex = sequentialStringIndex + 1
+            argumentIndex = sequentialStringIndex
+        end
+
+        if valueType == "s" and captureStringArgumentIndex and argumentIndex == captureStringArgumentIndex then
+            parts[#parts + 1] = "(.+)"
+        elseif valueType == "d" then
+            parts[#parts + 1] = "%d+"
+        else
+            parts[#parts + 1] = ".+"
+        end
+
+        index = endPos + 1
+    end
+
+    return "^" .. table.concat(parts) .. "$"
+end
+
+local LOOT_SELF_MESSAGE_PATTERNS
+local LOOT_RECIPIENT_MESSAGE_PATTERNS
+
+local function GetLootSelfMessagePatterns()
+    if LOOT_SELF_MESSAGE_PATTERNS then
+        return LOOT_SELF_MESSAGE_PATTERNS
+    end
+
+    LOOT_SELF_MESSAGE_PATTERNS = {}
+    for _, globalName in ipairs({
+        "LOOT_ITEM_SELF",
+        "LOOT_ITEM_PUSHED_SELF",
+    }) do
+        local pattern = BuildLootMessagePattern(_G[globalName], nil)
+        if pattern then
+            LOOT_SELF_MESSAGE_PATTERNS[#LOOT_SELF_MESSAGE_PATTERNS + 1] = pattern
+        end
+    end
+
+    return LOOT_SELF_MESSAGE_PATTERNS
+end
+
+local function GetLootRecipientMessagePatterns()
+    if LOOT_RECIPIENT_MESSAGE_PATTERNS then
+        return LOOT_RECIPIENT_MESSAGE_PATTERNS
+    end
+
+    LOOT_RECIPIENT_MESSAGE_PATTERNS = {}
+    for _, globalName in ipairs({
+        "LOOT_ITEM",
+        "LOOT_ITEM_PUSHED",
+    }) do
+        local pattern = BuildLootMessagePattern(_G[globalName], 1)
+        if pattern then
+            LOOT_RECIPIENT_MESSAGE_PATTERNS[#LOOT_RECIPIENT_MESSAGE_PATTERNS + 1] = pattern
+        end
+    end
+
+    return LOOT_RECIPIENT_MESSAGE_PATTERNS
+end
+
+local function IsLootSelfMessage(message)
+    if type(message) ~= "string" or message == "" then
+        return false
+    end
+
+    for _, pattern in ipairs(GetLootSelfMessagePatterns()) do
+        if message:match(pattern) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function ExtractLootRecipientFromMessage(message)
+    if type(message) ~= "string" or message == "" then
+        return nil
+    end
+
+    if IsLootSelfMessage(message) then
+        return "__SELF__"
+    end
+
+    for _, pattern in ipairs(GetLootRecipientMessagePatterns()) do
+        local recipient = message:match(pattern)
+        if type(recipient) == "string" and recipient ~= "" then
+            return recipient
+        end
+    end
+
+    return nil
+end
+
 function MythicTools:GetLootTargetByRunId(runId)
     local target = self:GetRunById(runId)
     if not target and self.runtime and self.runtime.activeRun and self.runtime.activeRun.runId == runId then
@@ -2876,11 +3047,6 @@ function MythicTools:ResolveLootRecipientFromChat(runId, playerName, guid)
         end
     end
 
-    local localPlayer = self.playerName or self:GetUnitFullName("player")
-    if type(localPlayer) == "string" and localPlayer ~= "" then
-        return localPlayer
-    end
-
     return nil
 end
 
@@ -2898,6 +3064,13 @@ function MythicTools:HandleChatMsgLoot(message, playerName, _, _, _, _, _, _, _,
     local itemLink = ExtractLootLinkFromChatMessage(message)
     if not itemLink then
         return
+    end
+
+    local parsedRecipient = ExtractLootRecipientFromMessage(message)
+    if parsedRecipient == "__SELF__" then
+        playerName = self.playerName or self:GetUnitFullName("player")
+    elseif type(parsedRecipient) == "string" and parsedRecipient ~= "" then
+        playerName = parsedRecipient
     end
 
     local recipient = self:ResolveLootRecipientFromChat(tracking.runId, playerName, guid)
@@ -2937,7 +3110,7 @@ function MythicTools:HandleLootClosed()
         self:ResolvePendingCompletionPopup("LOOT_CLOSED")
     end
 
-    self:Schedule(1.0, function()
+    self:Schedule(2.0, function()
         if self.runtime and self.runtime.lootTracking == tracking then
             self:StopLootTracking()
         end
@@ -2952,6 +3125,7 @@ function MythicTools:BuildCompletedRun(activeRun, completionInfo)
     local elapsedTimeMS = math.max(0, (completedAt - (tonumber(activeRun.startedAt) or completedAt)) * 1000)
 
     self:UpdateActiveRunFromCompletionMembers(activeRun, completionInfo.members)
+    self:HydrateObservedScoresForTarget(activeRun)
 
     local run = {
         runId = activeRun.runId,
@@ -3309,6 +3483,16 @@ function MythicTools:PersistCompletedRun(activeRun, completionInfo, trigger)
         return nil
     end
 
+    local existingRun = self:GetRunById(activeRun.runId)
+    if type(existingRun) == "table" then
+        self:PushRuntimeDebug(("skip duplicate completed run %s trigger=%s"):format(
+            tostring(activeRun.runId),
+            tostring(trigger or "unknown")
+        ))
+        self:ForgetRecoveryState(activeRun.runId)
+        return existingRun
+    end
+
     local run = self:BuildCompletedRun(activeRun, completionInfo)
     if type(run) ~= "table" then
         return nil
@@ -3431,6 +3615,8 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
     if type(activeRun) ~= "table" or type(run) ~= "table" then
         return false
     end
+
+    self:HydrateObservedScoresForTarget(run)
 
     local foundDetailsStats = self:AccumulateDetailsData(run)
     local detailsMatchedRun = (tonumber(run.combatTimeSeconds) or 0) > 0 and not RunNeedsExactCombatTime(run)
