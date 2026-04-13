@@ -4,6 +4,7 @@ local MythicTools = ns.MythicTools
 local WHITE_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 local CLASS_CIRCLE_TEXTURE = "Interface\\TargetingFrame\\UI-Classes-Circles"
 local QUESTION_MARK_ICON = "Interface\\ICONS\\INV_Misc_QuestionMark"
+local ADDON_ICON = "Interface\\AddOns\\MythicTools\\Media\\smh.tga"
 local DEFAULT_DUNGEON_ICON = "Interface\\Icons\\achievement_challengemode_gold"
 local DEFAULT_DUNGEON_BG = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark"
 local MAX_LOOT_ICONS = 5
@@ -4517,7 +4518,7 @@ function MythicTools:CreateMinimapButton()
     button.Icon = button:CreateTexture(nil, "ARTWORK")
     button.Icon:SetPoint("TOPLEFT", 7, -7)
     button.Icon:SetPoint("BOTTOMRIGHT", -7, 7)
-    button.Icon:SetTexture(DEFAULT_DUNGEON_ICON)
+    button.Icon:SetTexture(ADDON_ICON)
     button.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
     button.Label = CreateFont(button, 10, COLORS.bright, "CENTER")

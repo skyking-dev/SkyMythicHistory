@@ -19,24 +19,16 @@ end
 
 function MythicTools:BuildKnownPlayerMessage(fullName, playerEntry)
     local displayName = self:GetShortName(fullName)
-    local latestRun = playerEntry.lastRunId and self:GetRunById(playerEntry.lastRunId) or nil
 
-    if latestRun then
-        return ("You already ran %d keys with %s (%d timed). Last run: %s +%d on %s."):format(
-            playerEntry.totalRuns or 0,
-            displayName,
-            playerEntry.timedRuns or 0,
-            latestRun.dungeonName or "Unknown",
-            latestRun.level or 0,
-            self:FormatDate(latestRun.endTime)
-        )
-    end
-
-    return ("You already ran %d keys with %s (%d timed)."):format(
+    return ("You already ran %d keys with %s (%d timed)"):format(
         playerEntry.totalRuns or 0,
         displayName,
         playerEntry.timedRuns or 0
     )
+end
+
+function MythicTools:PrintHistoryAlert(message)
+    print(("|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:14:14:0:0|t |cffcfa85dSky Mythic History|r: %s"):format(tostring(message or "")))
 end
 
 function MythicTools:ScanKnownPlayersInGroup()
@@ -45,20 +37,24 @@ function MythicTools:ScanKnownPlayersInGroup()
     end
 
     local roster = self:GetCurrentGroupRoster()
-    local rosterSignature = self:GetRosterSignature(roster)
-    self.runtime.lastRosterSignature = rosterSignature
+    local previousGroupPlayers = self.runtime.currentGroupPlayers or {}
+    local currentGroupPlayers = {}
 
     if #roster <= 1 then
+        self.runtime.currentGroupPlayers = currentGroupPlayers
         return
     end
 
     for _, entry in ipairs(roster) do
+        currentGroupPlayers[entry.name] = true
+
         if entry.name ~= self.playerName then
             local playerEntry = self.db.playersIndex[entry.name]
-            if playerEntry and self.runtime.announcedPlayers[entry.name] ~= rosterSignature then
-                self.runtime.announcedPlayers[entry.name] = rosterSignature
-                self:Print(self:BuildKnownPlayerMessage(entry.name, playerEntry))
+            if playerEntry and not previousGroupPlayers[entry.name] then
+                self:PrintHistoryAlert(self:BuildKnownPlayerMessage(entry.name, playerEntry))
             end
         end
     end
+
+    self.runtime.currentGroupPlayers = currentGroupPlayers
 end

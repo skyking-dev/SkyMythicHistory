@@ -678,8 +678,7 @@ function MythicTools:ADDON_LOADED(loadedAddon)
     self.runtime = {
         activeRun = nil,
         groupScanQueued = false,
-        announcedPlayers = {},
-        lastRosterSignature = "",
+        currentGroupPlayers = {},
         lootTracking = nil,
         pendingCompletionPopup = nil,
         lastActiveRunSnapshot = nil,

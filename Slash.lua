@@ -4,6 +4,7 @@ local MythicTools = ns.MythicTools
 function MythicTools:InitializeSlashCommands()
     SLASH_MYTHICTOOLS1 = "/mtools"
     SLASH_MYTHICTOOLS2 = "/mythictools"
+    SLASH_MYTHICTOOLS3 = "/smh"
 
     SlashCmdList.MYTHICTOOLS = function(message)
         MythicTools:HandleSlashCommand(message)
@@ -73,6 +74,6 @@ function MythicTools:HandleSlashCommand(message)
         return
     end
 
-    self:Print("Commands: /mtools, /mythictools, /mtools player Name-Realm, /mtools test, /mtools debug")
+    self:Print("Commands: /smh, /mtools, /mythictools, /mtools player Name-Realm, /mtools test, /mtools debug")
 end
 
