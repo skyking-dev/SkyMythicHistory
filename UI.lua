@@ -20,6 +20,10 @@ local PLAYER_ROW_HEIGHT = 60
 local COMPLETION_ROW_HEIGHT = 52
 local PLAYER_TABLE_ROW_HEIGHT = 18
 local PLAYER_DETAIL_HISTORY_ROW_HEIGHT = 52
+local PLAYER_DETAIL_HERO_HEIGHT = 304
+local PLAYER_DETAIL_NOTE_HEIGHT = 76
+local PLAYER_DETAIL_HISTORY_HEIGHT = 326
+local PLAYER_DETAIL_CONTENT_HEIGHT = PLAYER_DETAIL_HERO_HEIGHT + PLAYER_DETAIL_NOTE_HEIGHT + PLAYER_DETAIL_HISTORY_HEIGHT + 48
 local COMPLETION_POPUP_HEIGHT = 492
 local COMPACT_STATS_PLAYER_WIDTH = 170
 local COMPACT_STATS_SCORE_X = 232
@@ -32,6 +36,7 @@ local COMPACT_STATS_INTERRUPTS_X = 824
 local COMPACT_STATS_DEATHS_X = 922
 local COMPACT_STATS_LOOT_ICON_SIZE = 26
 local COMPACT_STATS_LOOT_SPACING = 4
+local DUNGEON_BACKGROUND_ASPECT = 2
 
 local MAX_STATS_DUNGEON_ROWS = 12
 local MAX_STATS_CLASS_ROWS = 13
@@ -473,6 +478,31 @@ end
 local function ClipChildren(frame)
     if frame and frame.SetClipsChildren then
         frame:SetClipsChildren(true)
+    end
+end
+
+local function SetTextureCoverTexCoord(texture, sourceAspect)
+    if not texture then
+        return
+    end
+
+    local width = texture:GetWidth() or 0
+    local height = texture:GetHeight() or 0
+    local targetAspect = height > 0 and (width / height) or 0
+    sourceAspect = tonumber(sourceAspect) or DUNGEON_BACKGROUND_ASPECT
+    if targetAspect <= 0 or sourceAspect <= 0 then
+        texture:SetTexCoord(0, 1, 0, 1)
+        return
+    end
+
+    if targetAspect > sourceAspect then
+        local visibleHeight = max(0.05, min(1, sourceAspect / targetAspect))
+        local top = (1 - visibleHeight) / 2
+        texture:SetTexCoord(0, 1, top, top + visibleHeight)
+    else
+        local visibleWidth = max(0.05, min(1, targetAspect / sourceAspect))
+        local left = (1 - visibleWidth) / 2
+        texture:SetTexCoord(left, left + visibleWidth, 0, 1)
     end
 end
 
@@ -942,13 +972,14 @@ local function CreateMetricCard(parent, labelText)
 
     card.Value = CreateFont(card, 18, COLORS.text)
     card.Value:SetPoint("TOPLEFT", card.Label, "BOTTOMLEFT", 0, -8)
-    card.Value:SetPoint("TOPRIGHT", -12, -12)
+    card.Value:SetPoint("BOTTOMLEFT", 12, 10)
+    card.Value:SetWidth(96)
     card.Value:SetJustifyH("LEFT")
 
-    card.Meta = CreateFont(card, 10, COLORS.subdued)
-    card.Meta:SetPoint("BOTTOMLEFT", 12, 10)
-    card.Meta:SetPoint("BOTTOMRIGHT", -12, 10)
-    card.Meta:SetJustifyH("LEFT")
+    card.Meta = CreateFont(card, 10, COLORS.subdued, "RIGHT")
+    card.Meta:SetPoint("LEFT", card.Value, "RIGHT", 10, 0)
+    card.Meta:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+    card.Meta:SetJustifyH("RIGHT")
 
     return card
 end
@@ -1577,6 +1608,50 @@ local function FormatKeyLevel(level)
     return ("+%d"):format(level)
 end
 
+local function GetPlayerNameParts(fullName)
+    if type(fullName) ~= "string" or fullName == "" then
+        return "", ""
+    end
+
+    local characterName, realmName = fullName:match("^([^%-]+)%-(.+)$")
+    if characterName and realmName then
+        return characterName, realmName
+    end
+
+    return fullName, ""
+end
+
+local function GetRaiderIORegion()
+    local regionID = GetCurrentRegion and GetCurrentRegion() or nil
+    local regions = {
+        [1] = "us",
+        [2] = "kr",
+        [3] = "eu",
+        [4] = "tw",
+        [5] = "cn",
+    }
+
+    return regions[regionID] or "us"
+end
+
+local function GetRaiderIOSlug(text)
+    if type(text) ~= "string" or text == "" then
+        return nil
+    end
+
+    return text:gsub("%s+", ""):gsub("%-+", ""):lower()
+end
+
+local function BuildRaiderIOCharacterURL(fullName)
+    local characterName, realmName = GetPlayerNameParts(fullName)
+    local realmSlug = GetRaiderIOSlug(realmName)
+    if characterName == "" or not realmSlug then
+        return nil
+    end
+
+    return ("https://raider.io/characters/%s/%s/%s"):format(GetRaiderIORegion(), realmSlug, characterName)
+end
+
 local function GetRunUpgradeText(run)
     if not run or MythicTools:GetRunResult(run) == "abandoned" then
         return ""
@@ -1660,13 +1735,32 @@ local function GetPlayerScoreColor(stat)
     return COLORS.text
 end
 
-local function GetRunOutOfCombatText(run)
-    local outOfCombatSeconds = tonumber(run and run.outOfCombatSeconds) or 0
-    if outOfCombatSeconds <= 0 then
-        return ""
+local function FormatRunDurationSeconds(seconds)
+    seconds = tonumber(seconds)
+    if not seconds then
+        return "--"
     end
 
-    return ("Out of combat %s"):format(MythicTools:FormatDurationSeconds(outOfCombatSeconds))
+    return MythicTools:FormatDurationMS(max(0, seconds) * 1000)
+end
+
+local function GetRunTimeRemainingText(run)
+    local timeLimitSeconds = tonumber(run and run.timeLimitSeconds)
+    if not timeLimitSeconds or timeLimitSeconds <= 0 then
+        return "Time Remaining --"
+    end
+
+    local elapsedSeconds = (tonumber(run and run.timeMS) or 0) / 1000
+    return ("Time Remaining %s"):format(FormatRunDurationSeconds(timeLimitSeconds - elapsedSeconds))
+end
+
+local function GetRunOutOfCombatDisplayText(run)
+    return ("Out of combat %s"):format(FormatRunDurationSeconds(tonumber(run and run.outOfCombatSeconds) or 0))
+end
+
+local function GetRunUpgradeDisplayText(run)
+    local upgradeText = GetRunUpgradeText(run)
+    return ("Upgrade %s"):format(upgradeText ~= "" and upgradeText or "+0")
 end
 
 local function GetRunStatsSourceText(run)
@@ -2083,7 +2177,13 @@ function MythicTools:SetRunArt(iconWidget, backgroundWidget, run)
     if backgroundWidget then
         local bg = GetDungeonBackground(run)
         backgroundWidget:SetTexture(bg or DEFAULT_DUNGEON_BG)
-        backgroundWidget:SetTexCoord(0, 1, 0, 1)
+        SetTextureCoverTexCoord(backgroundWidget, DUNGEON_BACKGROUND_ASPECT)
+        if backgroundWidget.SetHorizTile then
+            backgroundWidget:SetHorizTile(false)
+        end
+        if backgroundWidget.SetVertTile then
+            backgroundWidget:SetVertTile(false)
+        end
     end
 end
 
@@ -2425,14 +2525,123 @@ function MythicTools:ShowPlayersIndex()
     self:ShowTab("Players")
 end
 
-function MythicTools:FocusSelectedPlayerNoteEditor()
-    if not (self.ui and self.ui.playerDetailNoteEditor and self.ui.playerDetailNoteEditor.EditBox) then
+function MythicTools:ShowRaiderIOCopyPopup(playerName)
+    local url = BuildRaiderIOCharacterURL(playerName)
+    if not url then
+        self:Print("Raider.IO link unavailable for this player.")
         return
     end
 
-    local editBox = self.ui.playerDetailNoteEditor.EditBox
-    editBox:SetFocus()
-    editBox:SetCursorPosition(strlen(editBox:GetText() or ""))
+    if not StaticPopupDialogs.MYTHICTOOLS_COPY_RAIDERIO then
+        StaticPopupDialogs.MYTHICTOOLS_COPY_RAIDERIO = {
+            text = "Copy Raider.IO link\nPress Ctrl+C to copy.",
+            button1 = OKAY or "OK",
+            hasEditBox = true,
+            editBoxWidth = 360,
+            timeout = 0,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnShow = function(dialog, data)
+                local editBox = dialog.editBox or dialog.EditBox
+                if editBox then
+                    editBox:SetText(data or dialog.data or "")
+                    editBox:SetFocus()
+                    editBox:HighlightText()
+                end
+            end,
+            EditBoxOnEscapePressed = function(editBox)
+                editBox:GetParent():Hide()
+            end,
+            EditBoxOnEnterPressed = function(editBox)
+                editBox:HighlightText()
+            end,
+            OnAccept = function(dialog)
+                local editBox = dialog.editBox or dialog.EditBox
+                if editBox then
+                    editBox:ClearFocus()
+                end
+            end,
+        }
+    end
+
+    local dialog = StaticPopup_Show("MYTHICTOOLS_COPY_RAIDERIO", nil, nil, url)
+    local editBox = dialog and (dialog.editBox or dialog.EditBox) or nil
+    if editBox then
+        editBox:SetText(url)
+        editBox:SetFocus()
+        editBox:HighlightText()
+    end
+end
+
+function MythicTools:ShowPlayerNoteEditor(playerName)
+    playerName = self:NormalizePlayerName(playerName) or self:TrimText(playerName)
+    if not playerName or playerName == "" then
+        return
+    end
+
+    if not StaticPopupDialogs.MYTHICTOOLS_EDIT_PLAYER_NOTE then
+        StaticPopupDialogs.MYTHICTOOLS_EDIT_PLAYER_NOTE = {
+            text = "Player note",
+            button1 = SAVE or "Save",
+            button2 = CANCEL or "Cancel",
+            hasEditBox = true,
+            editBoxWidth = 360,
+            timeout = 0,
+            whileDead = true,
+            hideOnEscape = true,
+            preferredIndex = 3,
+            OnShow = function(dialog, data)
+                local editBox = dialog.editBox or dialog.EditBox
+                if editBox then
+                    editBox:SetMaxLetters(160)
+                    editBox:SetText(MythicTools:GetPlayerNote(data or dialog.playerName or dialog.data) or "")
+                    editBox:SetFocus()
+                    editBox:HighlightText()
+                end
+            end,
+            OnAccept = function(dialog, data)
+                local editBox = dialog.editBox or dialog.EditBox
+                local targetPlayer = data or dialog.playerName or dialog.data
+                MythicTools:SetPlayerNote(targetPlayer, editBox and editBox:GetText() or "")
+                if editBox then
+                    editBox:ClearFocus()
+                end
+                local playerEntry = MythicTools:GetSelectedPlayerEntry()
+                if playerEntry and playerEntry.fullName == targetPlayer then
+                    MythicTools:RefreshPlayerDetailView(playerEntry)
+                end
+            end,
+            EditBoxOnEscapePressed = function(editBox)
+                editBox:GetParent():Hide()
+            end,
+            EditBoxOnEnterPressed = function(editBox)
+                local dialog = editBox:GetParent()
+                if dialog and dialog.button1 then
+                    dialog.button1:Click()
+                end
+            end,
+        }
+    end
+
+    local dialog = StaticPopup_Show("MYTHICTOOLS_EDIT_PLAYER_NOTE", nil, nil, playerName)
+    if dialog then
+        dialog.playerName = playerName
+        local editBox = dialog.editBox or dialog.EditBox
+        if editBox then
+            editBox:SetMaxLetters(160)
+            editBox:SetText(self:GetPlayerNote(playerName) or "")
+            editBox:SetFocus()
+            editBox:HighlightText()
+        end
+    end
+end
+
+function MythicTools:FocusSelectedPlayerNoteEditor()
+    local playerName = self.db and self.db.ui and self.db.ui.selectedPlayer
+    if playerName then
+        self:ShowPlayerNoteEditor(playerName)
+    end
 end
 
 function MythicTools:OpenPlayerHistory(playerName, focusNote)
@@ -2446,6 +2655,12 @@ function MythicTools:OpenPlayerHistory(playerName, focusNote)
     self:BuildUI()
     self:ToggleMainFrame(true)
     self:ShowTab("Players")
+    if self.ui and self.ui.playerDetailScrollFrame then
+        self.ui.playerDetailScrollFrame:SetVerticalScroll(0)
+    end
+    if self.ui and self.ui.playerDetailScrollBar then
+        self.ui.playerDetailScrollBar:SetValue(0)
+    end
 
     if focusNote then
         self.runtime = self.runtime or {}
@@ -2489,6 +2704,13 @@ function MythicTools:ShowPlayerContextMenu(playerName)
                 MythicTools:EditPlayerNote(playerName)
             end,
         },
+        {
+            text = "Copy Raider.IO link",
+            notCheckable = true,
+            func = function()
+                MythicTools:ShowRaiderIOCopyPopup(playerName)
+            end,
+        },
     }
 
     self.playerContextMenuFrame = self.playerContextMenuFrame or CreateFrame("Frame", "MythicToolsPlayerContextMenu", UIParent, "UIDropDownMenuTemplate")
@@ -2498,19 +2720,11 @@ end
 
 function MythicTools:SaveSelectedPlayerNote()
     local playerName = self.db and self.db.ui and self.db.ui.selectedPlayer
-    if not (playerName and self.ui and self.ui.playerDetailNoteEditor and self.ui.playerDetailNoteEditor.EditBox) then
+    if not playerName then
         return
     end
 
-    self:SetPlayerNote(playerName, self.ui.playerDetailNoteEditor.EditBox:GetText() or "")
-    if self.ui.playerDetailNoteStatus then
-        self.ui.playerDetailNoteStatus:SetText("Saved to your account history.")
-    end
-
-    local playerEntry = self:GetSelectedPlayerEntry()
-    if playerEntry then
-        self:RefreshPlayerDetailView(playerEntry)
-    end
+    self:ShowPlayerNoteEditor(playerName)
 end
 
 function MythicTools:GetPlayerNameFromMenuContext(contextData)
@@ -2660,20 +2874,11 @@ function MythicTools:RefreshRunView()
         local row = self.ui.runRows[rowIndex]
         local run = runs[offset + rowIndex]
         if run then
-            local upgradeText = GetRunUpgradeText(run)
-            local scoreText = GetRunScoreText(run)
-            local subtitle = ("%s  |  %d players  |  %d item%s"):format(
-                self:FormatDate(run.endTime),
-                self:GetRunPlayerCount(run),
-                self:GetRunLootCount(run),
-                self:GetRunLootCount(run) == 1 and "" or "s"
+            local subtitle = ("%s  •  Time %s  •  Deaths %d"):format(
+                self:FormatDateTime(run.endTime),
+                self:FormatDurationMS(run.timeMS),
+                run.totalDeaths or 0
             )
-            if upgradeText ~= "" then
-                subtitle = subtitle .. ("  |  Upgrade %s"):format(upgradeText)
-            end
-            if scoreText ~= "" then
-                subtitle = subtitle .. ("  |  %s"):format(scoreText)
-            end
             row:Show()
             row.runId = run.runId
             self:SetRunArt(row.Icon, nil, run)
@@ -2755,22 +2960,35 @@ function MythicTools:RefreshPlayerDetailView(playerEntry)
 
     self:SetPortraitWidget(self.ui.playerDetailPortrait, playerEntry.fullName, playerEntry.classFilename, playerEntry.specIconID)
     self:SetRoleBadge(self.ui.playerDetailRoleBadge, playerEntry.role)
-    self.ui.playerDetailName:SetText(playerEntry.shortName or playerEntry.fullName or "Unknown player")
+    local characterName, realmName = GetPlayerNameParts(playerEntry.fullName)
+    self.ui.playerDetailName:SetText(characterName ~= "" and characterName or (playerEntry.shortName or playerEntry.fullName or "Unknown player"))
+    if self.ui.playerDetailRealm then
+        self.ui.playerDetailRealm:SetText(realmName ~= "" and realmName or "Unknown realm")
+    end
     self.ui.playerDetailMeta:SetText(#heroMeta > 0 and table.concat(heroMeta, "  |  ") or "Historical player summary")
-    self.ui.playerDetailSummaryPrimary:SetText(("Runs %d  |  Timed %d  |  OT %d  |  Ab %d  |  Best %s  |  Avg %.1f"):format(
-        playerEntry.totalRuns or 0,
-        playerEntry.timedRuns or 0,
-        playerEntry.overtimeRuns or 0,
-        playerEntry.abandonedRuns or 0,
-        FormatKeyLevel(playerEntry.bestTimedLevel),
-        playerEntry.averageLevel or 0
-    ))
-    self.ui.playerDetailSummarySecondary:SetText(("Max DPS %s  |  Avg DPS %s  |  Max HPS %s  |  Avg HPS %s"):format(
-        self:FormatAmount(playerEntry.maxDps or 0),
-        self:FormatAmount(playerEntry.averageDps or 0),
-        self:FormatAmount(playerEntry.maxHps or 0),
-        self:FormatAmount(playerEntry.averageHps or 0)
-    ))
+
+    local raiderIOUrl = BuildRaiderIOCharacterURL(playerEntry.fullName)
+    if self.ui.playerDetailRaiderIOButton then
+        self.ui.playerDetailRaiderIOButton.playerName = playerEntry.fullName
+        if raiderIOUrl then
+            self.ui.playerDetailRaiderIOButton:Enable()
+        else
+            self.ui.playerDetailRaiderIOButton:Disable()
+        end
+        self.ui.playerDetailRaiderIOButton.Text:SetText(raiderIOUrl and "Copy Raider.IO" or "No Raider.IO")
+        SetTextColor(self.ui.playerDetailRaiderIOButton.Text, raiderIOUrl and COLORS.text or COLORS.subdued)
+    end
+
+    if self.ui.playerDetailMetricCards then
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.runs, tostring(playerEntry.totalRuns or 0), "Total runs")
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.timed, tostring(playerEntry.timedRuns or 0), ("%.1f%% success"):format(playerEntry.successRate or 0), COLORS.success)
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.bestKey, FormatKeyLevel(playerEntry.bestTimedLevel), "Best timed")
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.avgKey, string.format("%.1f", playerEntry.averageLevel or 0), "Average key")
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.maxDps, self:FormatAmount(playerEntry.maxDps or 0), "Maximum DPS", COLORS.accentSoft)
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.avgDps, self:FormatAmount(playerEntry.averageDps or 0), "Average DPS")
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.maxHps, self:FormatAmount(playerEntry.maxHps or 0), "Maximum HPS", COLORS.accentSoft)
+        self:SetMetricCardValue(self.ui.playerDetailMetricCards.avgHps, self:FormatAmount(playerEntry.averageHps or 0), "Average HPS")
+    end
 
     local noteParts = {}
     if playerEntry.lastDungeonName then
@@ -2817,30 +3035,21 @@ function MythicTools:RefreshPlayerDetailView(playerEntry)
     end
     if self.ui.playerDetailSpecChipsContainer then
         local reserveWidth = visibleChipCount > 0 and (88 + ((visibleChipCount - 1) * 92)) or 0
-        local rightInset = reserveWidth > 0 and (reserveWidth + 30) or 18
         self.ui.playerDetailSpecChipsContainer:SetWidth(reserveWidth)
-        self.ui.playerDetailSummaryPrimary:ClearAllPoints()
-        self.ui.playerDetailSummaryPrimary:SetPoint("TOPLEFT", self.ui.playerDetailMeta, "BOTTOMLEFT", 0, -8)
-        self.ui.playerDetailSummaryPrimary:SetPoint("TOPRIGHT", self.ui.playerDetailHero, "TOPRIGHT", -rightInset, -68)
-        self.ui.playerDetailSummarySecondary:ClearAllPoints()
-        self.ui.playerDetailSummarySecondary:SetPoint("TOPLEFT", self.ui.playerDetailSummaryPrimary, "BOTTOMLEFT", 0, -6)
-        self.ui.playerDetailSummarySecondary:SetPoint("TOPRIGHT", self.ui.playerDetailHero, "TOPRIGHT", -rightInset, -88)
-        self.ui.playerDetailHeroNote:ClearAllPoints()
-        self.ui.playerDetailHeroNote:SetPoint("TOPLEFT", self.ui.playerDetailSummarySecondary, "BOTTOMLEFT", 0, -6)
-        self.ui.playerDetailHeroNote:SetPoint("TOPRIGHT", self.ui.playerDetailHero, "TOPRIGHT", -rightInset, -106)
         self.ui.playerDetailSpecChipsContainer:SetShown(visibleChipCount > 0)
     end
     local noteText = self:GetPlayerNote(playerEntry.fullName)
-
-    if self.ui.playerDetailNoteEditor and self.ui.playerDetailNoteEditor.EditBox then
-        local editBox = self.ui.playerDetailNoteEditor.EditBox
-        if not editBox:HasFocus() or editBox.playerName ~= playerEntry.fullName then
-            editBox:SetText(noteText)
-            editBox.playerName = playerEntry.fullName
-        end
+    if self.ui.playerDetailNoteText then
+        self.ui.playerDetailNoteText:SetText(noteText ~= "" and noteText or "No note yet.")
+        SetTextColor(self.ui.playerDetailNoteText, noteText ~= "" and COLORS.text or COLORS.subdued)
+    end
+    if self.ui.playerDetailNoteEdit then
+        self.ui.playerDetailNoteEdit.playerName = playerEntry.fullName
+        self.ui.playerDetailNoteEdit.Text:SetText(noteText ~= "" and "Edit note" or "Add note")
     end
     if self.ui.playerDetailNoteStatus then
-        self.ui.playerDetailNoteStatus:SetText(noteText ~= "" and "Saved." or "Up to 160 characters.")
+        self.ui.playerDetailNoteStatus:SetText("")
+        self.ui.playerDetailNoteStatus:Hide()
     end
 
     local allRecentRuns = self:GetPlayerRecentRuns(playerEntry.fullName)
@@ -3813,14 +4022,60 @@ function MythicTools:BuildPlayersPage(parent)
         MythicTools:ShowPlayersIndex()
     end)
 
+    self.ui.playerDetailRaiderIOButton = CreateActionButton(detailView, 132, 28, "Copy Raider.IO")
+    self.ui.playerDetailRaiderIOButton:SetPoint("LEFT", self.ui.playerDetailBackButton, "RIGHT", 12, 0)
+    self.ui.playerDetailRaiderIOButton:SetScript("OnClick", function(button)
+        MythicTools:ShowRaiderIOCopyPopup(button.playerName or (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.selectedPlayer))
+    end)
+
     self.ui.playerDetailHeader = CreateFont(detailView, 12, COLORS.muted)
-    self.ui.playerDetailHeader:SetPoint("LEFT", self.ui.playerDetailBackButton, "RIGHT", 14, 0)
+    self.ui.playerDetailHeader:SetPoint("LEFT", self.ui.playerDetailRaiderIOButton, "RIGHT", 14, 0)
     self.ui.playerDetailHeader:SetText("Player details")
 
-    local heroCard = CreateFrame("Frame", nil, detailView)
-    heroCard:SetPoint("TOPLEFT", 12, -52)
-    heroCard:SetPoint("TOPRIGHT", -12, -52)
-    heroCard:SetHeight(128)
+    local detailScrollFrame = CreateFrame("ScrollFrame", nil, detailView)
+    detailScrollFrame:SetPoint("TOPLEFT", 12, -52)
+    detailScrollFrame:SetPoint("BOTTOMRIGHT", -20, 12)
+    detailScrollFrame:EnableMouseWheel(true)
+    self.ui.playerDetailScrollFrame = detailScrollFrame
+
+    local frameW = (self.db and self.db.ui and self.db.ui.width) or 1280
+    local detailScrollW = max(760, frameW - 245)
+    local detailContent = CreateFrame("Frame", nil, detailScrollFrame)
+    detailContent:SetSize(detailScrollW, PLAYER_DETAIL_CONTENT_HEIGHT)
+    detailScrollFrame:SetScrollChild(detailContent)
+    self.ui.playerDetailContent = detailContent
+
+    local detailScrollBar = CreateFrame("Slider", nil, detailView)
+    detailScrollBar:SetOrientation("VERTICAL")
+    detailScrollBar:SetWidth(6)
+    detailScrollBar:SetPoint("TOPRIGHT", detailView, "TOPRIGHT", -12, -52)
+    detailScrollBar:SetPoint("BOTTOMRIGHT", detailView, "BOTTOMRIGHT", -12, 12)
+    detailScrollBar:SetMinMaxValues(0, 1)
+    detailScrollBar:SetValue(0)
+    detailScrollBar:Hide()
+    local detailThumb = detailScrollBar:CreateTexture(nil, "ARTWORK")
+    detailThumb:SetTexture(WHITE_TEXTURE)
+    detailThumb:SetWidth(4)
+    detailThumb:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.65)
+    detailScrollBar:SetThumbTexture(detailThumb)
+    detailScrollBar:SetScript("OnValueChanged", function(_, value)
+        detailScrollFrame:SetVerticalScroll(value)
+    end)
+    detailScrollFrame:SetScript("OnScrollRangeChanged", function(_, _, yRange)
+        local range = max(0, yRange or 0)
+        detailScrollBar:SetMinMaxValues(0, range)
+        detailScrollBar:SetShown(range > 0)
+    end)
+    detailScrollFrame:SetScript("OnMouseWheel", function(_, delta)
+        local current = detailScrollBar:GetValue()
+        local _, maxValue = detailScrollBar:GetMinMaxValues()
+        detailScrollBar:SetValue(max(0, min(current - delta * 60, maxValue)))
+    end)
+    self.ui.playerDetailScrollBar = detailScrollBar
+
+    local heroCard = CreateFrame("Frame", nil, detailContent)
+    heroCard:SetPoint("TOPLEFT", detailContent, "TOPLEFT", 0, 0)
+    heroCard:SetSize(detailScrollW, PLAYER_DETAIL_HERO_HEIGHT)
     self:ApplySurface(heroCard, COLORS.headerBG, COLORS.surface, COLORS.accent)
     self.ui.playerDetailHero = heroCard
 
@@ -3838,9 +4093,14 @@ function MythicTools:BuildPlayersPage(parent)
     self.ui.playerDetailName:SetPoint("TOPLEFT", self.ui.playerDetailPortrait, "TOPRIGHT", 16, -2)
     self.ui.playerDetailName:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -52, -18)
 
-    self.ui.playerDetailMeta = CreateFont(heroCard, 12, COLORS.muted)
-    self.ui.playerDetailMeta:SetPoint("TOPLEFT", self.ui.playerDetailName, "BOTTOMLEFT", 0, -8)
-    self.ui.playerDetailMeta:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -52, -52)
+    self.ui.playerDetailRealm = CreateFont(heroCard, 12, COLORS.accentSoft)
+    self.ui.playerDetailRealm:SetPoint("TOPLEFT", self.ui.playerDetailName, "BOTTOMLEFT", 0, -6)
+    self.ui.playerDetailRealm:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -52, -52)
+    self.ui.playerDetailRealm:SetJustifyH("LEFT")
+
+    self.ui.playerDetailMeta = CreateFont(heroCard, 11, COLORS.muted)
+    self.ui.playerDetailMeta:SetPoint("TOPLEFT", self.ui.playerDetailRealm, "BOTTOMLEFT", 0, -6)
+    self.ui.playerDetailMeta:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -52, -74)
     self.ui.playerDetailMeta:SetJustifyH("LEFT")
 
     self.ui.playerDetailSummaryPrimary = CreateFont(heroCard, 11, COLORS.text)
@@ -3848,18 +4108,42 @@ function MythicTools:BuildPlayersPage(parent)
     self.ui.playerDetailSummaryPrimary:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -18, -68)
     self.ui.playerDetailSummaryPrimary:SetJustifyH("LEFT")
     self.ui.playerDetailSummaryPrimary:SetJustifyV("TOP")
+    self.ui.playerDetailSummaryPrimary:Hide()
 
     self.ui.playerDetailSummarySecondary = CreateFont(heroCard, 11, COLORS.muted)
     self.ui.playerDetailSummarySecondary:SetPoint("TOPLEFT", self.ui.playerDetailSummaryPrimary, "BOTTOMLEFT", 0, -6)
     self.ui.playerDetailSummarySecondary:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -18, -88)
     self.ui.playerDetailSummarySecondary:SetJustifyH("LEFT")
     self.ui.playerDetailSummarySecondary:SetJustifyV("TOP")
+    self.ui.playerDetailSummarySecondary:Hide()
 
     self.ui.playerDetailHeroNote = CreateFont(heroCard, 10, COLORS.subdued)
-    self.ui.playerDetailHeroNote:SetPoint("TOPLEFT", self.ui.playerDetailSummarySecondary, "BOTTOMLEFT", 0, -6)
-    self.ui.playerDetailHeroNote:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -18, -106)
+    self.ui.playerDetailHeroNote:SetPoint("TOPLEFT", self.ui.playerDetailMeta, "BOTTOMLEFT", 0, -6)
+    self.ui.playerDetailHeroNote:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", -18, -94)
     self.ui.playerDetailHeroNote:SetJustifyH("LEFT")
     self.ui.playerDetailHeroNote:SetJustifyV("TOP")
+
+    local metricSpecs = {
+        {key = "runs", label = "Runs"},
+        {key = "timed", label = "Timed"},
+        {key = "bestKey", label = "Best Key"},
+        {key = "avgKey", label = "Avg Key"},
+        {key = "maxDps", label = "Max DPS"},
+        {key = "avgDps", label = "Avg DPS"},
+        {key = "maxHps", label = "Max HPS"},
+        {key = "avgHps", label = "Avg HPS"},
+    }
+    self.ui.playerDetailMetricCards = {}
+    local metricGap = 8
+    local metricCardW = floor((detailScrollW - 36 - (3 * metricGap)) / 4)
+    for index, spec in ipairs(metricSpecs) do
+        local card = CreateMetricCard(heroCard, spec.label)
+        card:SetSize(metricCardW, 58)
+        local column = (index - 1) % 4
+        local row = floor((index - 1) / 4)
+        card:SetPoint("TOPLEFT", heroCard, "TOPLEFT", 18 + (column * (metricCardW + metricGap)), -118 - (row * 66))
+        self.ui.playerDetailMetricCards[spec.key] = card
+    end
 
     self.ui.playerDetailNoteIndicator = CreateFont(heroCard, 10, COLORS.accentSoft, "RIGHT")
     self.ui.playerDetailNoteIndicator:SetPoint("BOTTOMRIGHT", heroCard, "BOTTOMRIGHT", -18, 14)
@@ -3887,16 +4171,15 @@ function MythicTools:BuildPlayersPage(parent)
     self.ui.playerDetailSpecChipEmpty:SetText("")
     self.ui.playerDetailSpecChipEmpty:Hide()
 
-    local noteCard = CreateFrame("Frame", nil, detailView)
+    local noteCard = CreateFrame("Frame", nil, detailContent)
     noteCard:SetPoint("TOPLEFT", heroCard, "BOTTOMLEFT", 0, -12)
-    noteCard:SetPoint("TOPRIGHT", heroCard, "TOPRIGHT", 0, -12)
-    noteCard:SetHeight(118)
+    noteCard:SetSize(detailScrollW, PLAYER_DETAIL_NOTE_HEIGHT)
     self:ApplySurface(noteCard, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
     self.ui.playerDetailNoteCard = noteCard
 
     local noteTitle = CreateFont(noteCard, 13, COLORS.text)
     noteTitle:SetPoint("TOPLEFT", 16, -14)
-    noteTitle:SetText("Private note")
+    noteTitle:SetText("Note")
 
     local noteHint = CreateFont(noteCard, 10, COLORS.subdued)
     noteHint:SetPoint("LEFT", noteTitle, "RIGHT", 10, 0)
@@ -3904,28 +4187,30 @@ function MythicTools:BuildPlayersPage(parent)
     noteHint:Hide()
     self.ui.playerDetailNoteHint = noteHint
 
-    self.ui.playerDetailNoteSave = CreateActionButton(noteCard, 78, 28, "Save")
-    self.ui.playerDetailNoteSave:SetPoint("TOPRIGHT", -16, -10)
-    self.ui.playerDetailNoteSave:SetScript("OnClick", function()
-        MythicTools:SaveSelectedPlayerNote()
+    self.ui.playerDetailNoteEdit = CreateActionButton(noteCard, 92, 26, "Add note")
+    self.ui.playerDetailNoteEdit:SetPoint("TOPRIGHT", -16, -10)
+    self.ui.playerDetailNoteEdit:SetScript("OnClick", function(button)
+        MythicTools:ShowPlayerNoteEditor(button.playerName or (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.selectedPlayer))
     end)
 
-    self.ui.playerDetailNoteEditor = CreateMultilineNoteEditor(noteCard, 836, 96)
-    self.ui.playerDetailNoteEditor:ClearAllPoints()
-    self.ui.playerDetailNoteEditor:SetPoint("TOPLEFT", noteCard, "TOPLEFT", 16, -42)
-    self.ui.playerDetailNoteEditor:SetPoint("TOPRIGHT", noteCard, "TOPRIGHT", -16, -42)
-    self.ui.playerDetailNoteEditor:SetPoint("BOTTOMLEFT", noteCard, "BOTTOMLEFT", 16, 30)
-    self.ui.playerDetailNoteEditor:SetPoint("BOTTOMRIGHT", noteCard, "BOTTOMRIGHT", -16, 30)
+    self.ui.playerDetailNoteText = CreateFont(noteCard, 12, COLORS.text)
+    self.ui.playerDetailNoteText:SetPoint("TOPLEFT", 16, -38)
+    self.ui.playerDetailNoteText:SetPoint("TOPRIGHT", noteCard, "TOPRIGHT", -124, -38)
+    self.ui.playerDetailNoteText:SetPoint("BOTTOMRIGHT", noteCard, "BOTTOMRIGHT", -124, 28)
+    self.ui.playerDetailNoteText:SetJustifyH("LEFT")
+    self.ui.playerDetailNoteText:SetJustifyV("TOP")
+    if self.ui.playerDetailNoteText.SetWordWrap then
+        self.ui.playerDetailNoteText:SetWordWrap(true)
+    end
 
     self.ui.playerDetailNoteStatus = CreateFont(noteCard, 10, COLORS.subdued)
     self.ui.playerDetailNoteStatus:SetPoint("BOTTOMLEFT", 16, 12)
-    self.ui.playerDetailNoteStatus:SetText("Up to 160 characters.")
+    self.ui.playerDetailNoteStatus:SetText("")
+    self.ui.playerDetailNoteStatus:Hide()
 
-    local historyCard = CreateFrame("Frame", nil, detailView)
+    local historyCard = CreateFrame("Frame", nil, detailContent)
     historyCard:SetPoint("TOPLEFT", noteCard, "BOTTOMLEFT", 0, -12)
-    historyCard:SetPoint("TOPRIGHT", noteCard, "TOPRIGHT", 0, -12)
-    historyCard:SetPoint("BOTTOMLEFT", detailView, "BOTTOMLEFT", 12, 12)
-    historyCard:SetPoint("BOTTOMRIGHT", detailView, "BOTTOMRIGHT", -12, 12)
+    historyCard:SetSize(detailScrollW, PLAYER_DETAIL_HISTORY_HEIGHT)
     self:ApplySurface(historyCard, COLORS.sectionBG, COLORS.surface, COLORS.accentSoft)
     ClipChildren(historyCard)
     self.ui.playerDetailHistoryCard = historyCard
@@ -4177,6 +4462,7 @@ function MythicTools:BuildCompletionPopup()
     frame.Background = frame:CreateTexture(nil, "BACKGROUND")
     frame.Background:SetAllPoints()
     frame.Background:SetAlpha(0.10)
+    self.completionPopupBackground = frame.Background
 
     local point = self.db.ui.completionPopupPoint or {"CENTER", "CENTER", 0, 40}
     frame:SetPoint(point[1] or "CENTER", UIParent, point[2] or point[1] or "CENTER", point[3] or 0, point[4] or 40)
@@ -4415,28 +4701,21 @@ function MythicTools:RefreshCompletionPopup()
     end
 
     self:SetRunArt(self.completionPopupHeroIcon, self.completionPopupHeroBackground, run)
+    self:SetRunArt(nil, self.completionPopupBackground, run)
     frame.Title:SetText(("%s +%d"):format(run.dungeonName or "Unknown", run.level or 0))
     frame.Meta:SetText(("%s  •  Time %s  •  Deaths %d"):format(
         self:FormatDateTime(run.endTime),
         self:FormatDurationMS(run.timeMS),
         run.totalDeaths or 0
     ))
-    local upgradeText = GetRunUpgradeText(run)
     local scoreText = GetRunScoreText(run)
-    local outOfCombatText = GetRunOutOfCombatText(run)
-    local submeta = ("Time limit %s  •  Loot recorded %d item%s"):format(
-        self:FormatDurationSeconds(run.timeLimitSeconds),
-        self:GetRunLootCount(run),
-        self:GetRunLootCount(run) == 1 and "" or "s"
+    local submeta = ("%s  •  %s  •  %s"):format(
+        GetRunTimeRemainingText(run),
+        GetRunOutOfCombatDisplayText(run),
+        GetRunUpgradeDisplayText(run)
     )
-    if upgradeText ~= "" then
-        submeta = submeta .. ("  •  Upgrade %s"):format(upgradeText)
-    end
     if scoreText ~= "" then
         submeta = submeta .. ("  •  %s"):format(scoreText)
-    end
-    if outOfCombatText ~= "" then
-        submeta = submeta .. ("  •  %s"):format(outOfCombatText)
     end
     local statsSourceText = GetRunStatsSourceText(run)
     if statsSourceText ~= "" then
