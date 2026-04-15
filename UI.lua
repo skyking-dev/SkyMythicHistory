@@ -4,7 +4,7 @@ local MythicTools = ns.MythicTools
 local WHITE_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 local CLASS_CIRCLE_TEXTURE = "Interface\\TargetingFrame\\UI-Classes-Circles"
 local QUESTION_MARK_ICON = "Interface\\ICONS\\INV_Misc_QuestionMark"
-local ADDON_ICON = "Interface\\AddOns\\MythicTools\\Media\\smh.tga"
+local ADDON_ICON = "Interface\\AddOns\\SkyMythicHistory\\Media\\smh.tga"
 local DEFAULT_DUNGEON_ICON = "Interface\\Icons\\achievement_challengemode_gold"
 local DEFAULT_DUNGEON_BG = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark"
 local MAX_LOOT_ICONS = 5
@@ -24,11 +24,12 @@ local COMPLETION_POPUP_HEIGHT = 492
 local COMPACT_STATS_PLAYER_WIDTH = 170
 local COMPACT_STATS_SCORE_X = 232
 local COMPACT_STATS_ITEMS_X = 326
-local COMPACT_STATS_DAMAGE_X = 514
-local COMPACT_STATS_DPS_X = 594
-local COMPACT_STATS_HEALING_X = 670
-local COMPACT_STATS_INTERRUPTS_X = 754
-local COMPACT_STATS_DEATHS_X = 848
+local COMPACT_STATS_DAMAGE_X = 520
+local COMPACT_STATS_DPS_X = 600
+local COMPACT_STATS_HEALING_X = 672
+local COMPACT_STATS_HPS_X = 750
+local COMPACT_STATS_INTERRUPTS_X = 824
+local COMPACT_STATS_DEATHS_X = 922
 local COMPACT_STATS_LOOT_ICON_SIZE = 26
 local COMPACT_STATS_LOOT_SPACING = 4
 
@@ -1305,6 +1306,10 @@ local function CreateCompactStatRow(parent, portraitSize)
     row.Healing:SetPoint("LEFT", COMPACT_STATS_HEALING_X, 0)
     row.Healing:SetWidth(68)
 
+    row.HPS = CreateFont(row, 12, COLORS.text)
+    row.HPS:SetPoint("LEFT", COMPACT_STATS_HPS_X, 0)
+    row.HPS:SetWidth(58)
+
     row.Interrupts = CreateFont(row, 12, COLORS.text)
     row.Interrupts:SetPoint("LEFT", COMPACT_STATS_INTERRUPTS_X, 0)
     row.Interrupts:SetWidth(70)
@@ -1509,6 +1514,8 @@ function MythicTools:GetFilteredPlayers()
                 average = "averageLevel",
                 maxdps = "maxDps",
                 avgdps = "averageDps",
+                maxhps = "maxHps",
+                avghps = "averageHps",
             }
             local key = keyMap[sortState.column] or "totalRuns"
             leftValue = tonumber(left[key]) or 0
@@ -1726,6 +1733,8 @@ function MythicTools:BuildPlayerAnalyticsTableData(players)
                 {value = playerEntry.averageLevel or 0, display = string.format("%.1f", playerEntry.averageLevel or 0)},
                 {value = playerEntry.maxDps or 0, display = self:FormatAmount(playerEntry.maxDps or 0)},
                 {value = playerEntry.averageDps or 0, display = self:FormatAmount(playerEntry.averageDps or 0)},
+                {value = playerEntry.maxHps or 0, display = self:FormatAmount(playerEntry.maxHps or 0)},
+                {value = playerEntry.averageHps or 0, display = self:FormatAmount(playerEntry.averageHps or 0)},
             }
         }
     end
@@ -1750,6 +1759,8 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         {name = "Average", width = 58, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Max DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Avg DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
+        {name = "Max HPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
+        {name = "Avg HPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
     }
 
     local windowHeight = (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.height) or 760
@@ -1773,6 +1784,8 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         [9] = "average",
         [10] = "maxdps",
         [11] = "avgdps",
+        [12] = "maxhps",
+        [13] = "avghps",
     }
 
     tableWidget:RegisterEvents({
@@ -1829,6 +1842,8 @@ function MythicTools:ApplyPlayersTableSortState()
         average = 9,
         maxdps = 10,
         avgdps = 11,
+        maxhps = 12,
+        avghps = 13,
     }
     local selectedIndex = columnIndexByKey[sortState.column] or 3
 
@@ -3692,6 +3707,10 @@ function MythicTools:BuildRunsPage(parent)
     columnHealing:SetPoint("TOPLEFT", COMPACT_STATS_HEALING_X, -12)
     columnHealing:SetText("Healing")
 
+    local columnHPS = CreateFont(statsPanel, 11, COLORS.subdued)
+    columnHPS:SetPoint("TOPLEFT", COMPACT_STATS_HPS_X, -12)
+    columnHPS:SetText("HPS")
+
     local columnInterrupts = CreateFont(statsPanel, 11, COLORS.subdued)
     columnInterrupts:SetPoint("TOPLEFT", COMPACT_STATS_INTERRUPTS_X, -12)
     columnInterrupts:SetText("Interrupts")
@@ -4146,7 +4165,7 @@ function MythicTools:BuildCompletionPopup()
     end
 
     local frame = CreateFrame("Frame", "MythicToolsCompletionPopup", UIParent)
-    frame:SetSize(980, COMPLETION_POPUP_HEIGHT)
+    frame:SetSize(1120, COMPLETION_POPUP_HEIGHT)
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
     frame:SetFrameLevel(400)
     frame:SetClampedToScreen(true)
@@ -4279,6 +4298,10 @@ function MythicTools:BuildCompletionPopup()
     local columnHealing = CreateFont(statsPanel, 11, COLORS.subdued)
     columnHealing:SetPoint("TOPLEFT", COMPACT_STATS_HEALING_X, -12)
     columnHealing:SetText("Healing")
+
+    local columnHPS = CreateFont(statsPanel, 11, COLORS.subdued)
+    columnHPS:SetPoint("TOPLEFT", COMPACT_STATS_HPS_X, -12)
+    columnHPS:SetText("HPS")
 
     local columnInterrupts = CreateFont(statsPanel, 11, COLORS.subdued)
     columnInterrupts:SetPoint("TOPLEFT", COMPACT_STATS_INTERRUPTS_X, -12)
@@ -4463,10 +4486,12 @@ function MythicTools:RefreshCompletionPopup()
             row.Damage:SetText(self:FormatAmount(stat.damage))
             row.DPS:SetText(self:FormatAmount(self:GetPlayerDPS(run, stat)))
             row.Healing:SetText(self:FormatAmount(stat.healing))
+            row.HPS:SetText(self:FormatAmount(self:GetPlayerHPS(run, stat)))
             row.Interrupts:SetText(tostring(stat.interrupts or 0))
             row.Deaths:SetText(tostring(stat.deaths or 0))
             SetTextColor(row.Score, GetPlayerScoreColor(stat))
             SetTextColor(row.DPS, (stat.damage or 0) > 0 and COLORS.accentSoft or COLORS.text)
+            SetTextColor(row.HPS, (stat.healing or 0) > 0 and COLORS.accentSoft or COLORS.text)
             SetTextColor(row.Interrupts, (stat.interrupts or 0) > 0 and COLORS.accentSoft or COLORS.text)
             SetTextColor(row.Deaths, (stat.deaths or 0) > 0 and COLORS.danger or COLORS.text)
         else
@@ -4475,6 +4500,7 @@ function MythicTools:RefreshCompletionPopup()
             end
             row.Score:SetText("")
             row.DPS:SetText("")
+            row.HPS:SetText("")
             self:ResetLootButtons(row.LootButtons, row.LootLabel, row.LootOverflow, row.LootEmpty, row.LootTextButtons)
             row:Hide()
         end

@@ -5,8 +5,8 @@
 ## Notes: Social Mythic+ key history tracker for Midnight.
 ## Author: Skye
 ## Version: 0.3.0
-## IconTexture: Interface\AddOns\MythicTools\Media\smh.tga
-## SavedVariables: MythicToolsDB
+## IconTexture: Interface\AddOns\SkyMythicHistory\Media\smh.tga
+## SavedVariables: SkyMythicHistoryDB, MythicToolsDB
 
 Ace3/LibStub/LibStub.lua
 Ace3/AceGUI-3.0/AceGUI-3.0.xml
@@ -18,5 +18,4 @@ Capture.lua
 Social.lua
 UI.lua
 Slash.lua
-
 

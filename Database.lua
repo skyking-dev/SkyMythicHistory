@@ -38,17 +38,36 @@ local function CreateAggregateEntry(label)
     }
 end
 
+local function GetDerivedStatDuration(run, stat, activeSecondsField)
+    local durationSeconds = tonumber(run and run.combatTimeSeconds)
+    if durationSeconds and durationSeconds > 0 then
+        return durationSeconds
+    end
+
+    durationSeconds = tonumber(stat and stat[activeSecondsField])
+    if durationSeconds and durationSeconds > 0 then
+        return durationSeconds
+    end
+
+    durationSeconds = (tonumber(run and run.timeMS) or 0) / 1000
+    if durationSeconds > 0 then
+        return durationSeconds
+    end
+
+    return 0
+end
+
 local function RunNeedsDerivedStatRefresh(run)
-    if type(run) ~= "table" or (tonumber(run.combatTimeSeconds) or 0) <= 0 then
+    if type(run) ~= "table" then
         return false
     end
 
     for _, stat in pairs(run.playerStats or {}) do
         if type(stat) == "table" then
-            if stat.damage ~= nil and stat.dps == nil then
+            if stat.damage ~= nil and stat.dps == nil and GetDerivedStatDuration(run, stat, "damageActiveSeconds") > 0 then
                 return true
             end
-            if stat.healing ~= nil and stat.hps == nil then
+            if stat.healing ~= nil and stat.hps == nil and GetDerivedStatDuration(run, stat, "healingActiveSeconds") > 0 then
                 return true
             end
         end
@@ -145,7 +164,7 @@ local defaults = {
     },
     ui = {
         point = {"CENTER", "CENTER", 0, 0},
-        width = 1180,
+        width = 1280,
         height = 760,
         activeTab = "Runs",
         filters = {
@@ -207,9 +226,63 @@ local function NormalizeOwnedCharactersTable(owner, value)
     return normalized
 end
 
+local function TableHasEntries(value)
+    return type(value) == "table" and next(value) ~= nil
+end
+
+local function DatabaseHasHistoryData(value)
+    if type(value) ~= "table" then
+        return false
+    end
+
+    if type(value.runs) == "table" and #value.runs > 0 then
+        return true
+    end
+    if TableHasEntries(value.playerNotes) or TableHasEntries(value.ownedCharacters) then
+        return true
+    end
+    if type(value.debug) == "table" and type(value.debug.reports) == "table" and #value.debug.reports > 0 then
+        return true
+    end
+    if type(value.nextRunId) == "number" and value.nextRunId > 1 then
+        return true
+    end
+
+    return false
+end
+
+local function ShouldUseLegacyDatabase(current, legacy)
+    if not DatabaseHasHistoryData(legacy) then
+        return false
+    end
+
+    if type(current) ~= "table" or next(current) == nil then
+        return true
+    end
+
+    local currentRunCount = type(current.runs) == "table" and #current.runs or 0
+    local legacyRunCount = type(legacy.runs) == "table" and #legacy.runs or 0
+    if currentRunCount == 0 and legacyRunCount > 0 then
+        return true
+    end
+
+    return not DatabaseHasHistoryData(current)
+end
+
 function MythicTools:InitializeDB()
-    MythicToolsDB = MythicToolsDB or {}
-    self.db = MythicToolsDB
+    local migratedLegacyDB = false
+    if ShouldUseLegacyDatabase(SkyMythicHistoryDB, MythicToolsDB) then
+        SkyMythicHistoryDB = MythicToolsDB
+        migratedLegacyDB = true
+    else
+        SkyMythicHistoryDB = SkyMythicHistoryDB or {}
+    end
+
+    if migratedLegacyDB then
+        MythicToolsDB = nil
+    end
+
+    self.db = SkyMythicHistoryDB
 
     ApplyDefaults(self.db, defaults)
 
@@ -222,7 +295,7 @@ function MythicTools:InitializeDB()
     end
     self.db.debug.maxReports = self:Clamp(self.db.debug.maxReports or 20, 5, 50)
     self.db.debug.reports = type(self.db.debug.reports) == "table" and self.db.debug.reports or {}
-    self.db.ui.width = self:Clamp(self.db.ui.width, 1080, 1600)
+    self.db.ui.width = self:Clamp(self.db.ui.width, 1280, 1600)
     self.db.ui.height = self:Clamp(self.db.ui.height, 720, 960)
     self.db.ownedCharacters = NormalizeOwnedCharactersTable(self, self.db.ownedCharacters)
     if (self.db.ui.playerFilters.search or "") == "" and (self.db.ui.playerSearch or "") ~= "" then
@@ -255,7 +328,7 @@ function MythicTools:GetPlayerDPS(run, stat)
         return recordedDPS
     end
 
-    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.damageActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
+    local durationSeconds = GetDerivedStatDuration(run, stat, "damageActiveSeconds")
     if durationSeconds <= 0 then
         return 0
     end
@@ -269,7 +342,7 @@ function MythicTools:GetPlayerHPS(run, stat)
         return recordedHPS
     end
 
-    local durationSeconds = tonumber(run and run.combatTimeSeconds) or tonumber(stat and stat.healingActiveSeconds) or (((run and run.timeMS) or 0) / 1000)
+    local durationSeconds = GetDerivedStatDuration(run, stat, "healingActiveSeconds")
     if durationSeconds <= 0 then
         return 0
     end
@@ -758,5 +831,3 @@ function MythicTools:ClearHistory()
     end
     self:RefreshAllViews()
 end
-
-

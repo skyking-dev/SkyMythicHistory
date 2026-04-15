@@ -2358,14 +2358,21 @@ function MythicTools:RefreshRunDerivedStats(run)
         return
     end
 
-    local durationSeconds = tonumber(run.combatTimeSeconds) or 0
+    local combatDurationSeconds = tonumber(run.combatTimeSeconds) or 0
+    local runDurationSeconds = (tonumber(run.timeMS) or 0) / 1000
     for _, stat in pairs(run.playerStats or {}) do
         if type(stat) == "table" then
             stat.dps = nil
             stat.hps = nil
 
-            local damageDuration = durationSeconds > 0 and durationSeconds or (tonumber(stat.damageActiveSeconds) or 0)
-            local healingDuration = durationSeconds > 0 and durationSeconds or (tonumber(stat.healingActiveSeconds) or 0)
+            local damageDuration = combatDurationSeconds > 0 and combatDurationSeconds or (tonumber(stat.damageActiveSeconds) or 0)
+            local healingDuration = combatDurationSeconds > 0 and combatDurationSeconds or (tonumber(stat.healingActiveSeconds) or 0)
+            if damageDuration <= 0 then
+                damageDuration = runDurationSeconds
+            end
+            if healingDuration <= 0 then
+                healingDuration = runDurationSeconds
+            end
 
             if stat.damage ~= nil and damageDuration > 0 then
                 stat.dps = (tonumber(stat.damage) or 0) / damageDuration
@@ -2817,6 +2824,7 @@ function MythicTools:StopLootTracking()
     self.EventFrame:UnregisterEvent("ENCOUNTER_LOOT_RECEIVED")
     self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
     self.EventFrame:UnregisterEvent("LOOT_CLOSED")
+
     self:RefreshAllViews()
 end
 
@@ -3380,6 +3388,10 @@ function MythicTools:FinalizeSavedRunStats(runId, activeRunContext, attempt)
             tostring(#(run.sessionIDs or {})),
             tostring(run.statsSource or "unknown")
         ))
+    end
+
+    if self.RebuildPlayerIndex then
+        self:RebuildPlayerIndex()
     end
 
     self:RefreshAllViews()

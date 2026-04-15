@@ -6,7 +6,7 @@ _G.MythicTools = MythicTools
 
 MythicTools.name = ADDON_NAME
 MythicTools.version = C_AddOns and C_AddOns.GetAddOnMetadata and (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.3.0") or "0.3.0"
-MythicTools.DB_VERSION = 7
+MythicTools.DB_VERSION = 8
 
 local canaccessvalue = canaccessvalue or function(value)
     return value ~= nil
@@ -479,7 +479,7 @@ function MythicTools:PrintLatestDebugReport()
     for _, line in ipairs(self:FormatDebugReport(report)) do
         self:Print(line)
     end
-    self:Print("Full report is also stored in MythicToolsDB.debug.reports[1].")
+    self:Print("Full report is also stored in SkyMythicHistoryDB.debug.reports[1].")
 end
 
 function MythicTools:Clamp(value, minValue, maxValue)
@@ -811,7 +811,6 @@ MythicTools.EventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 MythicTools.EventFrame:RegisterEvent("ADDON_LOADED")
-
 
 
 
