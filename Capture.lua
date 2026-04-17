@@ -10,7 +10,7 @@ local DETAILS_ATTRIBUTE_MISC = _G.DETAILS_ATTRIBUTE_MISC or 4
 local COMPLETION_RETRY_DELAY = 0.35
 local MAX_COMPLETION_ATTEMPTS = 24
 local INACTIVE_RESOLUTION_DELAY = 5
-local LOOT_TRACKING_TIMEOUT = 45
+local LOOT_TRACKING_TIMEOUT = 5 * 60
 local LOOT_POPUP_FALLBACK_DELAY = 8
 local DEBUG_EVENT_BUFFER_SIZE = 30
 
@@ -269,6 +269,7 @@ local function CreateActiveRunSnapshot(self, activeRun)
         affixIDs = type(activeRun.affixIDs) == "table" and self:CopyArray(activeRun.affixIDs) or {},
         participants = CopySet(activeRun.participants),
         participantOrder = type(activeRun.participantOrder) == "table" and self:CopyArray(activeRun.participantOrder) or {},
+        initialPlayerScores = CopySet(activeRun.initialPlayerScores),
         playerStats = CopyActiveRunPlayerStats(self, activeRun.playerStats),
         deathState = CopySet(activeRun.deathState),
         totalDeaths = tonumber(activeRun.totalDeaths) or 0,
@@ -560,10 +561,6 @@ function MythicTools:ScheduleLootTrackingTimeout(tracking)
             return
         end
 
-        if tracking.lootClosed then
-            return
-        end
-
         local deadline = tonumber(tracking.lootFinalizeDeadline) or 0
         if deadline > 0 and time() < deadline then
             self:ScheduleLootTrackingTimeout(tracking)
@@ -781,9 +778,46 @@ function MythicTools:GetResolvedChallengeCompletionInfo(activeRun, allowEstimate
     return nil
 end
 
-local function GetObservedPlayerMythicScore(fullName)
+local function GetPlayerMythicScoreFromBlizzard(fullName, unitToken)
+    if not (C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary) then
+        return nil
+    end
+
+    local candidates = {}
+    if type(unitToken) == "string" and unitToken ~= "" then
+        candidates[#candidates + 1] = unitToken
+    end
+    if type(fullName) == "string" and fullName ~= "" then
+        candidates[#candidates + 1] = fullName
+        candidates[#candidates + 1] = MythicTools:GetShortName(fullName)
+        if MythicTools.playerName == fullName then
+            candidates[#candidates + 1] = "player"
+        end
+    end
+
+    local seen = {}
+    for _, candidate in ipairs(candidates) do
+        if not seen[candidate] then
+            seen[candidate] = true
+            local ok, ratingSummary = pcall(C_PlayerInfo.GetPlayerMythicPlusRatingSummary, candidate)
+            local rating = ok and ratingSummary and tonumber(ratingSummary.currentSeasonScore) or nil
+            if rating then
+                return rating
+            end
+        end
+    end
+
+    return nil
+end
+
+local function GetObservedPlayerMythicScore(fullName, unitToken)
     if type(fullName) ~= "string" or fullName == "" then
         return nil
+    end
+
+    local blizzardRating = GetPlayerMythicScoreFromBlizzard(fullName, unitToken)
+    if blizzardRating then
+        return blizzardRating
     end
 
     local shortName = MythicTools:GetShortName(fullName)
@@ -805,24 +839,16 @@ local function GetObservedPlayerMythicScore(fullName)
         end
     end
 
-    if MythicTools.playerName == fullName and C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary then
-        local ratingSummary = C_PlayerInfo.GetPlayerMythicPlusRatingSummary("player")
-        local rating = ratingSummary and tonumber(ratingSummary.currentSeasonScore) or nil
-        if rating then
-            return rating
-        end
-    end
-
     return nil
 end
 
-function MythicTools:RefreshObservedScoreForStat(stat, fullName)
+function MythicTools:RefreshObservedScoreForStat(stat, fullName, unitToken)
     if type(stat) ~= "table" or type(fullName) ~= "string" or fullName == "" then
         return false
     end
 
     local changed = false
-    local observedScore = GetObservedPlayerMythicScore(fullName)
+    local observedScore = GetObservedPlayerMythicScore(fullName, unitToken)
     if observedScore and observedScore > 0 then
         if (tonumber(stat.previousScore) or 0) <= 0 then
             stat.previousScore = observedScore
@@ -852,8 +878,63 @@ function MythicTools:HydrateObservedScoresForTarget(target)
     local changed = false
     for _, fullName in ipairs(self:GetRosterNamesForTarget(target)) do
         local stat = target.playerStats[fullName]
-        if type(stat) == "table" and self:RefreshObservedScoreForStat(stat, fullName) then
+        if type(stat) == "table" and self:RefreshObservedScoreForStat(stat, fullName, self:GetGroupUnitForPlayer(fullName)) then
             changed = true
+        end
+    end
+
+    return changed
+end
+
+function MythicTools:RecordInitialPlayerMythicScore(activeRun, fullName, unitToken)
+    if type(activeRun) ~= "table" or type(fullName) ~= "string" or fullName == "" then
+        return nil
+    end
+
+    activeRun.initialPlayerScores = type(activeRun.initialPlayerScores) == "table" and activeRun.initialPlayerScores or {}
+    if tonumber(activeRun.initialPlayerScores[fullName]) then
+        return tonumber(activeRun.initialPlayerScores[fullName])
+    end
+
+    local initialScore = GetObservedPlayerMythicScore(fullName, unitToken)
+    if initialScore and initialScore > 0 then
+        activeRun.initialPlayerScores[fullName] = initialScore
+        self:PushRuntimeDebug(("initial m+ score run %s player=%s score=%s"):format(
+            tostring(activeRun.runId),
+            tostring(fullName),
+            tostring(initialScore)
+        ))
+        return initialScore
+    end
+
+    return nil
+end
+
+function MythicTools:RefreshCompletedRunScoresFromBlizzard(run, activeRun)
+    if type(run) ~= "table" or type(run.playerStats) ~= "table" then
+        return false
+    end
+
+    local initialScores = type(activeRun) == "table" and activeRun.initialPlayerScores or nil
+    local changed = false
+    for _, fullName in ipairs(self:GetRosterNamesForTarget(run)) do
+        local stat = run.playerStats[fullName]
+        if type(stat) == "table" then
+            local previousScore = tonumber(initialScores and initialScores[fullName]) or tonumber(stat.previousScore) or 0
+            local currentScore = GetPlayerMythicScoreFromBlizzard(fullName, self:GetGroupUnitForPlayer(fullName))
+
+            if previousScore > 0 and tonumber(stat.previousScore) ~= previousScore then
+                stat.previousScore = previousScore
+                changed = true
+            end
+
+            if currentScore and currentScore > 0 and tonumber(stat.score) ~= currentScore then
+                stat.score = currentScore
+                changed = true
+            elseif (tonumber(stat.score) or 0) <= 0 and previousScore > 0 then
+                stat.score = previousScore
+                changed = true
+            end
         end
     end
 
@@ -1348,7 +1429,11 @@ function MythicTools:AddParticipantToActiveRun(activeRun, playerInfo)
         stat.classFilename = playerInfo.classFilename
     end
 
-    self:RefreshObservedScoreForStat(stat, fullName)
+    local initialScore = self:RecordInitialPlayerMythicScore(activeRun, fullName, playerInfo.unit)
+    if initialScore and (tonumber(stat.previousScore) or 0) <= 0 then
+        stat.previousScore = initialScore
+    end
+    self:RefreshObservedScoreForStat(stat, fullName, playerInfo.unit)
 
     if not stat.role and playerInfo.role then
         stat.role = self:NormalizeRole(playerInfo.role)
@@ -1453,6 +1538,7 @@ function MythicTools:CreateNewActiveRun(restored)
         affixIDs = type(affixIDs) == "table" and self:CopyArray(affixIDs) or {},
         participants = {},
         participantOrder = {},
+        initialPlayerScores = {},
         playerStats = {},
         deathState = {},
         totalDeaths = 0,
@@ -2720,6 +2806,95 @@ function MythicTools:AddLootToStat(stat, itemLink)
     return true
 end
 
+local function GetEncounterLootItemClassID(itemLink)
+    if not itemLink or itemLink == "" then
+        return nil
+    end
+
+    if C_Item and C_Item.GetItemInfoInstant then
+        local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemLink)
+        return tonumber(classID)
+    end
+
+    if GetItemInfoInstant then
+        local _, _, _, _, _, classID = GetItemInfoInstant(itemLink)
+        return tonumber(classID)
+    end
+
+    return nil
+end
+
+local function GetEncounterLootDetailedItemLevel(itemLink)
+    if C_Item and C_Item.GetDetailedItemLevelInfo then
+        return C_Item.GetDetailedItemLevelInfo(itemLink)
+    end
+
+    if GetDetailedItemLevelInfo then
+        return GetDetailedItemLevelInfo(itemLink)
+    end
+
+    return nil, nil, nil
+end
+
+local function IsBindToAccountUntilEquip(itemLink)
+    if not (C_Item and C_Item.IsItemBindToAccountUntilEquip) then
+        return false
+    end
+
+    local ok, result = pcall(C_Item.IsItemBindToAccountUntilEquip, itemLink)
+    return ok and result and true or false
+end
+
+local function GetTargetAverageItemLevel(target)
+    if type(target) ~= "table" then
+        return nil
+    end
+
+    local total, count = 0, 0
+    for _, fullName in ipairs(MythicTools:GetRosterNamesForTarget(target)) do
+        local stat = target.playerStats and target.playerStats[fullName] or nil
+        local itemLevel = tonumber(stat and stat.itemLevel)
+        if itemLevel and itemLevel > 0 then
+            total = total + itemLevel
+            count = count + 1
+        end
+    end
+
+    return count > 0 and (total / count) or nil
+end
+
+function MythicTools:IsTrackableEncounterLootItem(itemLink, runId)
+    if not itemLink or itemLink == "" then
+        return false
+    end
+
+    local classID = GetEncounterLootItemClassID(itemLink)
+    if classID then
+        local weaponClass = Enum and Enum.ItemClass and Enum.ItemClass.Weapon or 2
+        local armorClass = Enum and Enum.ItemClass and Enum.ItemClass.Armor or 4
+        if classID ~= weaponClass and classID ~= armorClass then
+            return false
+        end
+    end
+
+    if IsBindToAccountUntilEquip(itemLink) then
+        return false
+    end
+
+    local effectiveItemLevel, _, baseItemLevel = GetEncounterLootDetailedItemLevel(itemLink)
+    if tonumber(baseItemLevel) and tonumber(baseItemLevel) < 6 then
+        return false
+    end
+
+    local target = self:GetLootTargetByRunId(runId)
+    local averageItemLevel = GetTargetAverageItemLevel(target)
+    if averageItemLevel and averageItemLevel > 0 and tonumber(effectiveItemLevel) and tonumber(effectiveItemLevel) < averageItemLevel * 0.69 then
+        return false
+    end
+
+    return true
+end
+
 function MythicTools:RecordLootForTarget(target, rawName, itemLink)
     local fullName = self:ResolvePlayerNameForTarget(target, rawName)
     if not fullName then
@@ -2794,7 +2969,6 @@ function MythicTools:StartLootTracking(runId)
         activeRun.lootFinalizeDeadline = tracking.lootFinalizeDeadline
     end
     self.EventFrame:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")
-    self.EventFrame:RegisterEvent("CHAT_MSG_LOOT")
     self.EventFrame:RegisterEvent("LOOT_CLOSED")
     self:PushRuntimeDebug(("start loot tracking run %s"):format(tostring(runId)))
     self:ScheduleLootTrackingTimeout(tracking)
@@ -2822,7 +2996,6 @@ function MythicTools:StopLootTracking()
 
     self.runtime.lootTracking = nil
     self.EventFrame:UnregisterEvent("ENCOUNTER_LOOT_RECEIVED")
-    self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
     self.EventFrame:UnregisterEvent("LOOT_CLOSED")
 
     self:RefreshAllViews()
@@ -2841,6 +3014,15 @@ function MythicTools:HandleEncounterLootReceived(...)
             tostring(tracking.runId),
             tostring(itemLink),
             tostring(unitName)
+        ))
+        return
+    end
+
+    if not self:IsTrackableEncounterLootItem(itemLink, tracking.runId) then
+        self:PushRuntimeDebug(("encounter loot filtered run %s unit=%s item=%s"):format(
+            tostring(tracking.runId),
+            tostring(unitName),
+            tostring(itemLink)
         ))
         return
     end
@@ -3112,17 +3294,11 @@ function MythicTools:HandleLootClosed()
     end
 
     tracking.lootClosed = true
-    tracking.lootFinalizeDeadline = time()
+    tracking.lootClosedAt = time()
     self:RefreshAllViews()
     if self.ResolvePendingCompletionPopup then
         self:ResolvePendingCompletionPopup("LOOT_CLOSED")
     end
-
-    self:Schedule(2.0, function()
-        if self.runtime and self.runtime.lootTracking == tracking then
-            self:StopLootTracking()
-        end
-    end)
 end
 
 
@@ -3631,6 +3807,9 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
     self:HydrateObservedScoresForTarget(run)
 
     local foundDetailsStats = self:AccumulateDetailsData(run)
+    if self:RefreshCompletedRunScoresFromBlizzard(run, activeRun) then
+        self:PushRuntimeDebug(("refreshed m+ scores from blizzard run %s"):format(tostring(run.runId)))
+    end
     local detailsMatchedRun = (tonumber(run.combatTimeSeconds) or 0) > 0 and not RunNeedsExactCombatTime(run)
     local hadDetailsStats = foundDetailsStats and HasAnyRunStats(run)
 

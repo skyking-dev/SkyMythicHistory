@@ -4733,7 +4733,7 @@ function MythicTools:RefreshCompletionPopup()
         noteParts[#noteParts + 1] = run.statsNote
     end
     if self.runtime and self.runtime.lootTracking and run.runId and self.runtime.lootTracking.runId == run.runId then
-        noteParts[#noteParts + 1] = self.runtime.lootTracking.lootClosed and "Finalizing loot collection..." or "Waiting for chest loot..."
+        noteParts[#noteParts + 1] = self.runtime.lootTracking.lootClosed and "Tracking chest loot..." or "Waiting for chest loot..."
     end
     frame.Note:SetText(table.concat(noteParts, "  |  "))
     SetTextColor(frame.Note, run.statsUnavailable and COLORS.danger or COLORS.subdued)
