@@ -5,7 +5,7 @@ ns.MythicTools = MythicTools
 _G.MythicTools = MythicTools
 
 MythicTools.name = ADDON_NAME
-MythicTools.version = C_AddOns and C_AddOns.GetAddOnMetadata and (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.3.1") or "0.3.1"
+MythicTools.version = C_AddOns and C_AddOns.GetAddOnMetadata and (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.3.2") or "0.3.2"
 MythicTools.DB_VERSION = 8
 
 local canaccessvalue = canaccessvalue or function(value)
