@@ -25,6 +25,9 @@ local PLAYER_DETAIL_NOTE_HEIGHT = 76
 local PLAYER_DETAIL_HISTORY_HEIGHT = 326
 local PLAYER_DETAIL_CONTENT_HEIGHT = PLAYER_DETAIL_HERO_HEIGHT + PLAYER_DETAIL_NOTE_HEIGHT + PLAYER_DETAIL_HISTORY_HEIGHT + 48
 local COMPLETION_POPUP_HEIGHT = 492
+local MINIMAP_BUTTON_SIZE = 32
+local MINIMAP_BUTTON_ICON_INSET = 7
+local MINIMAP_BUTTON_EDGE_OVERLAP = 8
 local COMPACT_STATS_PLAYER_WIDTH = 170
 local COMPACT_STATS_SCORE_X = 232
 local COMPACT_STATS_ITEMS_X = 326
@@ -65,6 +68,12 @@ local max = math.max
 local AceGUI = LibStub and LibStub("AceGUI-3.0", true)
 local ScrollingTable = LibStub and LibStub("ScrollingTable", true)
 local ROLE_ICON_TEXTURE = "Interface\\LFGFrame\\UI-LFG-ICON-ROLES"
+
+local function GetMinimapButtonRadius()
+    local width = Minimap and Minimap:GetWidth() or 140
+    local height = Minimap and Minimap:GetHeight() or width
+    return (min(width or 140, height or 140) / 2) + (MINIMAP_BUTTON_SIZE / 2) - MINIMAP_BUTTON_EDGE_OVERLAP
+end
 
 local COLORS = {
     frameBG = {0.1, 0.1, 0.1, 0.9},
@@ -4792,7 +4801,7 @@ function MythicTools:UpdateMinimapButtonPosition()
     end
 
     local angle = tonumber(self.db.settings.minimapAngle) or -35
-    local radius = 78
+    local radius = GetMinimapButtonRadius()
     self.minimapButton:ClearAllPoints()
     self.minimapButton:SetPoint("CENTER", Minimap, "CENTER", cos(rad(angle)) * radius, sin(rad(angle)) * radius)
 end
@@ -4803,8 +4812,9 @@ function MythicTools:CreateMinimapButton()
     end
 
     local button = CreateFrame("Button", "MythicToolsMinimapButton", Minimap)
-    button:SetSize(32, 32)
+    button:SetSize(MINIMAP_BUTTON_SIZE, MINIMAP_BUTTON_SIZE)
     button:SetFrameStrata("MEDIUM")
+    button:SetFrameLevel((Minimap:GetFrameLevel() or 0) + 8)
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
 
@@ -4821,18 +4831,15 @@ function MythicTools:CreateMinimapButton()
     button.Bg:SetVertexColor(0.18, 0.28, 0.34, 1)
 
     button.Icon = button:CreateTexture(nil, "ARTWORK")
-    button.Icon:SetPoint("TOPLEFT", 7, -7)
-    button.Icon:SetPoint("BOTTOMRIGHT", -7, 7)
+    button.Icon:SetPoint("TOPLEFT", MINIMAP_BUTTON_ICON_INSET, -MINIMAP_BUTTON_ICON_INSET)
+    button.Icon:SetPoint("BOTTOMRIGHT", -MINIMAP_BUTTON_ICON_INSET, MINIMAP_BUTTON_ICON_INSET)
     button.Icon:SetTexture(ADDON_ICON)
-    button.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-    button.Label = CreateFont(button, 10, COLORS.bright, "CENTER")
-    button.Label:SetPoint("CENTER", 0, 9)
-    button.Label:SetText("M+")
+    button.Icon:SetTexCoord(0, 1, 0, 1)
 
     button:SetHighlightTexture(WHITE_TEXTURE)
     local highlight = button:GetHighlightTexture()
-    highlight:SetAllPoints()
+    highlight:SetPoint("TOPLEFT", MINIMAP_BUTTON_ICON_INSET, -MINIMAP_BUTTON_ICON_INSET)
+    highlight:SetPoint("BOTTOMRIGHT", -MINIMAP_BUTTON_ICON_INSET, MINIMAP_BUTTON_ICON_INSET)
     highlight:SetVertexColor(1, 1, 1, 0.10)
 
     button:SetScript("OnEnter", function(self)
