@@ -1379,6 +1379,34 @@ function MythicTools:GetSortedSessionIDs(sessionSet)
     return sorted
 end
 
+function MythicTools:GetDamageMeterSessionIDsForTotals(run)
+    local sessionIDs = type(run) == "table" and run.sessionIDs or nil
+    if type(sessionIDs) ~= "table" then
+        return {}
+    end
+
+    local sessionSet = {}
+    local hasTrackedCombatSession = false
+
+    for _, sessionID in ipairs(sessionIDs) do
+        if type(sessionID) == "number" then
+            sessionSet[sessionID] = true
+            if sessionID > 0 then
+                hasTrackedCombatSession = true
+            end
+        end
+    end
+
+    -- The Blizzard damage meter exposes session 0 as an aggregate/current view
+    -- on some builds. If we also have concrete combat sessions, summing both
+    -- counts the same damage twice.
+    if hasTrackedCombatSession and sessionSet[0] then
+        sessionSet[0] = nil
+    end
+
+    return self:GetSortedSessionIDs(sessionSet)
+end
+
 function MythicTools:EnsureActiveRunPlayerStat(activeRun, fullName)
     activeRun.playerStats[fullName] = activeRun.playerStats[fullName] or {
         name = fullName,
@@ -2477,6 +2505,7 @@ function MythicTools:HydrateRunCombatDuration(run)
 
     local runtimeSeconds = ((tonumber(run.timeMS) or 0) / 1000)
     local currentCombatSeconds = tonumber(run.combatTimeSeconds) or 0
+    local sessionIDs = self:GetDamageMeterSessionIDsForTotals(run)
 
     if currentCombatSeconds > 0 and runtimeSeconds > 0 and currentCombatSeconds <= (runtimeSeconds + 1) then
         currentCombatSeconds = math.min(currentCombatSeconds, runtimeSeconds)
@@ -2485,22 +2514,21 @@ function MythicTools:HydrateRunCombatDuration(run)
         return true
     end
 
-    local runEndedAt = tonumber(run.endTime) or 0
-    if runEndedAt > 0 and run.result ~= "abandoned" and math.abs(time() - runEndedAt) <= 30 then
-        local duration = GetCurrentOverallCombatDurationFromDamageMeter()
-        if duration and duration > 0 then
-            if runtimeSeconds > 0 then
-                duration = math.min(duration, runtimeSeconds)
-            end
-
-            run.combatTimeSeconds = duration
-            run.outOfCombatSeconds = math.max(0, runtimeSeconds - duration)
-            return true
-        end
-    end
-
-    local sessionIDs = run.sessionIDs
     if type(sessionIDs) ~= "table" or #sessionIDs == 0 then
+        local runEndedAt = tonumber(run.endTime) or 0
+        if runEndedAt > 0 and run.result ~= "abandoned" and math.abs(time() - runEndedAt) <= 30 then
+            local duration = GetCurrentOverallCombatDurationFromDamageMeter()
+            if duration and duration > 0 then
+                if runtimeSeconds > 0 then
+                    duration = math.min(duration, runtimeSeconds)
+                end
+
+                run.combatTimeSeconds = duration
+                run.outOfCombatSeconds = math.max(0, runtimeSeconds - duration)
+                return true
+            end
+        end
+
         return false
     end
 
@@ -3850,6 +3878,7 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
     local needsBlizzardFallback = HasMissingEntries(missingFields.damage) or HasMissingEntries(missingFields.healing) or HasMissingEntries(missingFields.interrupts)
     local damageMeterAvailable = C_DamageMeter and C_DamageMeter.IsDamageMeterAvailable and C_DamageMeter.IsDamageMeterAvailable()
     local missingBeforeFallback = CountMissingEntries(missingFields.damage) + CountMissingEntries(missingFields.healing) + CountMissingEntries(missingFields.interrupts)
+    local damageMeterSessionIDs = self:GetDamageMeterSessionIDsForTotals(run)
 
     if not damageMeterAvailable then
         if hadDetailsStats then
@@ -3867,13 +3896,13 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
         return false
     end
 
-    if needsBlizzardFallback and #run.sessionIDs == 0 and allowRetry and not activeRun.damageMeterResetSuspected then
+    if needsBlizzardFallback and #damageMeterSessionIDs == 0 and allowRetry and not activeRun.damageMeterResetSuspected then
         run.statsNote = "Waiting for damage meter sessions."
         return true
     end
 
     if needsBlizzardFallback then
-        local _, partyDataBlocked = self:AccumulatePartyData(run, run.sessionIDs)
+        local _, partyDataBlocked = self:AccumulatePartyData(run, damageMeterSessionIDs)
         if partyDataBlocked and allowRetry then
             return true
         end
@@ -3881,7 +3910,7 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
 
     missingFields = self:GetMissingRunStatFields(run)
     if HasMissingEntries(missingFields.damage) or HasMissingEntries(missingFields.healing) or HasMissingEntries(missingFields.interrupts) then
-        local _, playerDataBlocked = self:AccumulatePlayerData(run, run.sessionIDs, missingFields)
+        local _, playerDataBlocked = self:AccumulatePlayerData(run, damageMeterSessionIDs, missingFields)
         if playerDataBlocked and allowRetry then
             return true
         end
@@ -3889,9 +3918,9 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
 
     missingFields = self:GetMissingRunStatFields(run)
     if HasMissingEntries(missingFields.damage) or HasMissingEntries(missingFields.healing) or HasMissingEntries(missingFields.interrupts) then
-        local damageBlocked = HasMissingEntries(missingFields.damage) and self:AccumulateCombatType(run, run.sessionIDs, DAMAGE_DONE, "damage", missingFields.damage) or false
-        local healingBlocked = HasMissingEntries(missingFields.healing) and self:AccumulateCombatType(run, run.sessionIDs, HEALING_DONE, "healing", missingFields.healing) or false
-        local interruptsBlocked = HasMissingEntries(missingFields.interrupts) and self:AccumulateCombatType(run, run.sessionIDs, INTERRUPTS, "interrupts", missingFields.interrupts) or false
+        local damageBlocked = HasMissingEntries(missingFields.damage) and self:AccumulateCombatType(run, damageMeterSessionIDs, DAMAGE_DONE, "damage", missingFields.damage) or false
+        local healingBlocked = HasMissingEntries(missingFields.healing) and self:AccumulateCombatType(run, damageMeterSessionIDs, HEALING_DONE, "healing", missingFields.healing) or false
+        local interruptsBlocked = HasMissingEntries(missingFields.interrupts) and self:AccumulateCombatType(run, damageMeterSessionIDs, INTERRUPTS, "interrupts", missingFields.interrupts) or false
 
         if (damageBlocked or healingBlocked or interruptsBlocked) and allowRetry then
             return true

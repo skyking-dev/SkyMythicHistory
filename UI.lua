@@ -7,6 +7,7 @@ local QUESTION_MARK_ICON = "Interface\\ICONS\\INV_Misc_QuestionMark"
 local ADDON_ICON = "Interface\\AddOns\\SkyMythicHistory\\Media\\smh.tga"
 local DEFAULT_DUNGEON_ICON = "Interface\\Icons\\achievement_challengemode_gold"
 local DEFAULT_DUNGEON_BG = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark"
+local PLAYER_NOTE_ICON = "Interface\\AddOns\\SkyMythicHistory\\Media\\note.tga"
 local MAX_LOOT_ICONS = 5
 local RUN_ROWS = 6
 local PLAYER_ROWS = 6
@@ -40,8 +41,9 @@ local COMPACT_STATS_DEATHS_X = 922
 local COMPACT_STATS_LOOT_ICON_SIZE = 26
 local COMPACT_STATS_LOOT_SPACING = 4
 local DUNGEON_BACKGROUND_ASPECT = 2
+local ADDON_TITLE_TEXT = "Sky Mythic History"
 
-local MAX_STATS_DUNGEON_ROWS = 12
+local MAX_STATS_DUNGEON_ROWS = 8
 local MAX_STATS_CLASS_ROWS = 13
 local MAX_STATS_TEAMMATE_ROWS = 10
 local STATS_BAR_H = 8
@@ -143,6 +145,17 @@ local SEASON_DUNGEONS = {
 
 local function SetTextColor(fontString, color)
     fontString:SetTextColor(color[1], color[2], color[3], color[4] or 1)
+end
+
+local function ColorizeInlineText(text, color)
+    if type(text) ~= "string" or text == "" or type(color) ~= "table" then
+        return text or ""
+    end
+
+    local r = min(255, max(0, floor((color[1] or 1) * 255 + 0.5)))
+    local g = min(255, max(0, floor((color[2] or 1) * 255 + 0.5)))
+    local b = min(255, max(0, floor((color[3] or 1) * 255 + 0.5)))
+    return ("|cff%02x%02x%02x%s|r"):format(r, g, b, text)
 end
 
 local function CreateFont(parent, size, color, justifyH, layer, outline)
@@ -1674,6 +1687,32 @@ local function GetRunUpgradeText(run)
     return ("+%d"):format(upgradeLevels)
 end
 
+local function GetCompletionRunStatusText(run)
+    local result = MythicTools:GetRunResult(run)
+    if result == "timed" then
+        return "Timed"
+    end
+    if result == "abandoned" then
+        return "Abandoned"
+    end
+    return "Overtimed"
+end
+
+local function GetCompletionRunTitleText(run)
+    local title = ("%s +%d"):format(run and run.dungeonName or "Unknown", run and run.level or 0)
+    if not run then
+        return title
+    end
+
+    local statusText = GetCompletionRunStatusText(run)
+    local upgradeText = GetRunUpgradeText(run)
+    if MythicTools:GetRunResult(run) == "timed" and upgradeText ~= "" then
+        statusText = ("%s %s"):format(statusText, upgradeText)
+    end
+
+    return ("%s • %s"):format(title, ColorizeInlineText(statusText, GetRunStatusColor(run)))
+end
+
 local function FormatScoreNumber(score)
     score = tonumber(score)
     if not score then
@@ -1767,11 +1806,6 @@ local function GetRunOutOfCombatDisplayText(run)
     return ("Out of combat %s"):format(FormatRunDurationSeconds(tonumber(run and run.outOfCombatSeconds) or 0))
 end
 
-local function GetRunUpgradeDisplayText(run)
-    local upgradeText = GetRunUpgradeText(run)
-    return ("Upgrade %s"):format(upgradeText ~= "" and upgradeText or "+0")
-end
-
 local function GetRunStatsSourceText(run)
     local source = run and run.statsSource or nil
 
@@ -1796,12 +1830,16 @@ end
 
 local function PlayerTableCellUpdate(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, table)
     if not fShow then
+        if cellFrame.NoteIcon then
+            cellFrame.NoteIcon:Hide()
+        end
         cellFrame:Hide()
         return
     end
 
     local rowData = table:GetRow(realrow)
     local cellData = table:GetCell(rowData, column)
+    local isNoteColumn = cols and cols[column] and cols[column].noteColumn
     local displayValue = ""
     local color = COLORS.text
 
@@ -1812,7 +1850,23 @@ local function PlayerTableCellUpdate(rowFrame, cellFrame, data, cols, row, realr
         displayValue = cellData or ""
     end
 
-    cellFrame.text:SetText(displayValue)
+    if isNoteColumn then
+        cellFrame.text:SetText("")
+        if not cellFrame.NoteIcon then
+            cellFrame.NoteIcon = cellFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+            cellFrame.NoteIcon:SetTexture(PLAYER_NOTE_ICON)
+            cellFrame.NoteIcon:SetBlendMode("ADD")
+            cellFrame.NoteIcon:SetTexCoord(0, 1, 0, 1)
+            cellFrame.NoteIcon:SetSize(16, 16)
+            cellFrame.NoteIcon:SetPoint("CENTER", cellFrame, "CENTER", 0, 0)
+        end
+        cellFrame.NoteIcon:SetShown(type(cellData) == "table" and cellData.noteText ~= nil and cellData.noteText ~= "")
+    else
+        if cellFrame.NoteIcon then
+            cellFrame.NoteIcon:Hide()
+        end
+        cellFrame.text:SetText(displayValue)
+    end
     cellFrame.text:SetTextColor(color[1], color[2], color[3], color[4] or 1)
     cellFrame:Show()
 end
@@ -1822,6 +1876,8 @@ function MythicTools:BuildPlayerAnalyticsTableData(players)
 
     for _, playerEntry in ipairs(players or {}) do
         local iconMarkup = GetClassIconMarkup(playerEntry.classFilename, playerEntry.specIconID)
+        local noteText = self:GetPlayerNote(playerEntry.fullName)
+        local hasNote = noteText ~= nil and noteText ~= ""
         rows[#rows + 1] = {
             playerName = playerEntry.fullName,
             cols = {
@@ -1838,6 +1894,7 @@ function MythicTools:BuildPlayerAnalyticsTableData(players)
                 {value = playerEntry.averageDps or 0, display = self:FormatAmount(playerEntry.averageDps or 0)},
                 {value = playerEntry.maxHps or 0, display = self:FormatAmount(playerEntry.maxHps or 0)},
                 {value = playerEntry.averageHps or 0, display = self:FormatAmount(playerEntry.averageHps or 0)},
+                {value = hasNote and 1 or 0, display = "", noteText = hasNote and noteText or nil},
             }
         }
     end
@@ -1864,6 +1921,7 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
         {name = "Avg DPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Max HPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
         {name = "Avg HPS", width = 82, DoCellUpdate = PlayerTableCellUpdate},
+        {name = "", width = 26, sort = nil, DoCellUpdate = PlayerTableCellUpdate, noteColumn = true, align = "CENTER"},
     }
 
     local windowHeight = (MythicTools.db and MythicTools.db.ui and MythicTools.db.ui.height) or 760
@@ -1892,6 +1950,26 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
     }
 
     tableWidget:RegisterEvents({
+        OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, scrollingTable)
+            if not (cols and cols[column] and cols[column].noteColumn) then
+                return false
+            end
+
+            local rowData = scrollingTable and scrollingTable:GetRow(realrow)
+            local cellData = rowData and scrollingTable:GetCell(rowData, column)
+            local noteText = type(cellData) == "table" and cellData.noteText or nil
+            if noteText and noteText ~= "" then
+                GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("Note", COLORS.text[1], COLORS.text[2], COLORS.text[3])
+                GameTooltip:AddLine(noteText, COLORS.muted[1], COLORS.muted[2], COLORS.muted[3], true)
+                GameTooltip:Show()
+            end
+            return false
+        end,
+        OnLeave = function()
+            GameTooltip:Hide()
+            return false
+        end,
         OnClick = function(_, _, data, _, row, realrow, column, scrollingTable, mouseButton)
             if row and realrow then
                 local rowData = data and data[realrow]
@@ -1911,12 +1989,16 @@ function MythicTools:CreatePlayersAnalyticsTable(parent)
 
             C_Timer.After(0, function()
                 local sortColumn = sortColumns[column]
+                if not sortColumn then
+                    return
+                end
+
                 local sortDirection = "desc"
                 if scrollingTable and scrollingTable.cols and scrollingTable.cols[column] and scrollingTable.cols[column].sort == ScrollingTable.SORT_ASC then
                     sortDirection = "asc"
                 end
                 MythicTools.db.ui.playerSort = {
-                    column = sortColumn or "runs",
+                    column = sortColumn,
                     direction = sortDirection,
                 }
             end)
@@ -2780,7 +2862,7 @@ function MythicTools:HandleUnitPopupMenu(owner, rootDescription, contextData)
     end
 
     rootDescription:CreateDivider()
-    rootDescription:CreateTitle("Sky Mythic History")
+    rootDescription:CreateTitle(ADDON_TITLE_TEXT)
     rootDescription:CreateButton(summaryText, function()
         MythicTools:OpenPlayerHistory(playerName)
     end)
@@ -4510,7 +4592,7 @@ function MythicTools:BuildCompletionPopup()
 
     frame.Title = CreateFont(header, 22, COLORS.text)
     frame.Title:SetPoint("TOPLEFT", iconFrame, "TOPRIGHT", 16, -2)
-    frame.Title:SetPoint("RIGHT", header, "RIGHT", -154, 0)
+    frame.Title:SetPoint("RIGHT", header, "RIGHT", -52, 0)
 
     frame.Meta = CreateFont(header, 12, COLORS.muted)
     frame.Meta:SetPoint("TOPLEFT", frame.Title, "BOTTOMLEFT", 0, -8)
@@ -4711,17 +4793,16 @@ function MythicTools:RefreshCompletionPopup()
 
     self:SetRunArt(self.completionPopupHeroIcon, self.completionPopupHeroBackground, run)
     self:SetRunArt(nil, self.completionPopupBackground, run)
-    frame.Title:SetText(("%s +%d"):format(run.dungeonName or "Unknown", run.level or 0))
+    frame.Title:SetText(GetCompletionRunTitleText(run))
     frame.Meta:SetText(("%s  •  Time %s  •  Deaths %d"):format(
         self:FormatDateTime(run.endTime),
         self:FormatDurationMS(run.timeMS),
         run.totalDeaths or 0
     ))
     local scoreText = GetRunScoreText(run)
-    local submeta = ("%s  •  %s  •  %s"):format(
+    local submeta = ("%s  •  %s"):format(
         GetRunTimeRemainingText(run),
-        GetRunOutOfCombatDisplayText(run),
-        GetRunUpgradeDisplayText(run)
+        GetRunOutOfCombatDisplayText(run)
     )
     if scoreText ~= "" then
         submeta = submeta .. ("  •  %s"):format(scoreText)
@@ -4731,7 +4812,7 @@ function MythicTools:RefreshCompletionPopup()
         submeta = submeta .. ("  •  %s"):format(statsSourceText)
     end
     frame.Submeta:SetText(submeta)
-    frame.Status:SetText(GetRunStatusText(run))
+    frame.Status:SetText("")
     SetTextColor(frame.Status, GetRunStatusColor(run))
 
     local noteParts = {}
@@ -4834,6 +4915,7 @@ function MythicTools:CreateMinimapButton()
     button.Icon:SetPoint("TOPLEFT", MINIMAP_BUTTON_ICON_INSET, -MINIMAP_BUTTON_ICON_INSET)
     button.Icon:SetPoint("BOTTOMRIGHT", -MINIMAP_BUTTON_ICON_INSET, MINIMAP_BUTTON_ICON_INSET)
     button.Icon:SetTexture(ADDON_ICON)
+    button.Icon:SetBlendMode("ADD")
     button.Icon:SetTexCoord(0, 1, 0, 1)
 
     button:SetHighlightTexture(WHITE_TEXTURE)
@@ -4844,7 +4926,7 @@ function MythicTools:CreateMinimapButton()
 
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Sky Mythic History", COLORS.text[1], COLORS.text[2], COLORS.text[3])
+        GameTooltip:AddLine(ADDON_TITLE_TEXT, COLORS.text[1], COLORS.text[2], COLORS.text[3])
         GameTooltip:AddLine("Left click: open history", COLORS.muted[1], COLORS.muted[2], COLORS.muted[3])
         GameTooltip:AddLine("Right click: open settings", COLORS.muted[1], COLORS.muted[2], COLORS.muted[3])
         GameTooltip:Show()
@@ -4944,9 +5026,16 @@ function MythicTools:BuildUI()
     headerAccentLine:SetHeight(1)
     headerAccentLine:SetVertexColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.8)
 
+    local titleIcon = header:CreateTexture(nil, "OVERLAY", nil, 7)
+    titleIcon:SetTexture(ADDON_ICON)
+    titleIcon:SetBlendMode("ADD")
+    titleIcon:SetTexCoord(0, 1, 0, 1)
+    titleIcon:SetSize(16, 16)
+    titleIcon:SetPoint("LEFT", 14, 0)
+
     local title = CreateFont(header, 13, COLORS.accent)
-    title:SetPoint("LEFT", 14, 0)
-    title:SetText("Sky Mythic History")
+    title:SetPoint("LEFT", titleIcon, "RIGHT", 6, 0)
+    title:SetText(ADDON_TITLE_TEXT)
 
     -- Botão fechar estilo Cell (× vermelho)
     local closeButton = CreateFrame("Button", nil, header, "BackdropTemplate")
