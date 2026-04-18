@@ -5,7 +5,7 @@ ns.MythicTools = MythicTools
 _G.MythicTools = MythicTools
 
 MythicTools.name = ADDON_NAME
-MythicTools.version = C_AddOns and C_AddOns.GetAddOnMetadata and (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.3.2") or "0.3.2"
+MythicTools.version = C_AddOns and C_AddOns.GetAddOnMetadata and (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "0.3.3") or "0.3.3"
 MythicTools.DB_VERSION = 8
 
 local canaccessvalue = canaccessvalue or function(value)
@@ -811,6 +811,5 @@ MythicTools.EventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 MythicTools.EventFrame:RegisterEvent("ADDON_LOADED")
-
 
 

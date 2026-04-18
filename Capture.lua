@@ -4,6 +4,7 @@ local MythicTools = ns.MythicTools
 local DAMAGE_DONE = Enum and Enum.DamageMeterType and Enum.DamageMeterType.DamageDone or 0
 local HEALING_DONE = Enum and Enum.DamageMeterType and Enum.DamageMeterType.HealingDone or 2
 local INTERRUPTS = Enum and Enum.DamageMeterType and Enum.DamageMeterType.Interrupts or 5
+local DAMAGE_METER_OVERALL_SESSION = Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Overall or 0
 local DETAILS_ATTRIBUTE_DAMAGE = _G.DETAILS_ATTRIBUTE_DAMAGE or 1
 local DETAILS_ATTRIBUTE_HEAL = _G.DETAILS_ATTRIBUTE_HEAL or 2
 local DETAILS_ATTRIBUTE_MISC = _G.DETAILS_ATTRIBUTE_MISC or 4
@@ -1340,6 +1341,16 @@ local function HasAnyRunStats(run)
     return false
 end
 
+local function HasRunStatField(run, fieldName)
+    for _, stat in pairs(run.playerStats or {}) do
+        if type(stat) == "table" and stat[fieldName] ~= nil then
+            return true
+        end
+    end
+
+    return false
+end
+
 function MythicTools:GetAvailableCombatSessionSet()
     local sessionSet = {}
 
@@ -1901,11 +1912,9 @@ function MythicTools:HandleDamageMeterSessionUpdated(...)
         return
     end
 
-    for index = 1, select("#", ...) do
-        local value = select(index, ...)
-        if type(value) == "number" and not activeRun.excludedSessionIDs[value] then
-            activeRun.sessionIDs[value] = true
-        end
+    local damageMeterType, sessionID = ...
+    if type(damageMeterType) == "number" and type(sessionID) == "number" and damageMeterType == DAMAGE_DONE and sessionID > 0 and not activeRun.excludedSessionIDs[sessionID] then
+        activeRun.sessionIDs[sessionID] = true
     end
 
     self:TrackDamageMeterSessionsFromAvailableList()
@@ -2451,22 +2460,6 @@ local function GetCurrentOverallCombatDurationFromDamageMeter()
         or nil
 end
 
-local function RunNeedsExactCombatTime(run)
-    if type(run) ~= "table" then
-        return false
-    end
-
-    local runtimeSeconds = ((tonumber(run.timeMS) or 0) / 1000)
-    local combatTimeSeconds = tonumber(run.combatTimeSeconds) or 0
-    if runtimeSeconds <= 0 then
-        return combatTimeSeconds <= 0
-    end
-
-    -- Treat Details! combat time as valid as long as it is positive and
-    -- within a reasonable tolerance of the full run duration.
-    return combatTimeSeconds <= 0 or combatTimeSeconds > (runtimeSeconds + 5)
-end
-
 function MythicTools:RefreshRunDerivedStats(run)
     if type(run) ~= "table" then
         return
@@ -2567,10 +2560,12 @@ function MythicTools:HydrateRunCombatDuration(run)
     return true
 end
 
-function MythicTools:AccumulatePartyData(run, sessionIDs)
+function MythicTools:AccumulatePartyData(run, sessionIDs, requestedFields)
     if not (C_DamageMeter and C_DamageMeter.GetPartyData) then
         return false, false
     end
+
+    requestedFields = requestedFields or {damage = {}, healing = {}, interrupts = {}}
 
     local guidMap = {}
     for fullName, stat in pairs(run.playerStats) do
@@ -2591,9 +2586,12 @@ function MythicTools:AccumulatePartyData(run, sessionIDs)
                 local fullName = self:ResolveCompletedRunSource(run, guidMap, entry)
                 if fullName then
                     local stat = self:EnsureCompletedRunPlayer(run, fullName)
-                    local damage = GetEntryAmount(entry, PARTY_DATA_DAMAGE_FIELDS)
-                    local healing = GetEntryAmount(entry, PARTY_DATA_HEALING_FIELDS)
-                    local interrupts = GetEntryAmount(entry, PARTY_DATA_INTERRUPT_FIELDS)
+                    local needsDamage = requestedFields.damage and requestedFields.damage[fullName]
+                    local needsHealing = requestedFields.healing and requestedFields.healing[fullName]
+                    local needsInterrupts = requestedFields.interrupts and requestedFields.interrupts[fullName]
+                    local damage = needsDamage and GetEntryAmount(entry, PARTY_DATA_DAMAGE_FIELDS) or nil
+                    local healing = needsHealing and GetEntryAmount(entry, PARTY_DATA_HEALING_FIELDS) or nil
+                    local interrupts = needsInterrupts and GetEntryAmount(entry, PARTY_DATA_INTERRUPT_FIELDS) or nil
 
                     if damage ~= nil then
                         stat.damage = (stat.damage or 0) + damage
@@ -2649,16 +2647,6 @@ local function HasMissingEntries(missingField)
     return type(missingField) == "table" and next(missingField) ~= nil
 end
 
-local function CountMissingEntries(missingField)
-    local count = 0
-
-    for _ in pairs(missingField or {}) do
-        count = count + 1
-    end
-
-    return count
-end
-
 function MythicTools:AccumulatePlayerData(run, sessionIDs, requestedFields)
     if not (C_DamageMeter and C_DamageMeter.GetPlayerData) then
         return false, false
@@ -2706,11 +2694,7 @@ function MythicTools:AccumulatePlayerData(run, sessionIDs, requestedFields)
     return foundValues, blocked
 end
 
-function MythicTools:AccumulateCombatType(run, sessionIDs, damageType, fieldName, requestedPlayers)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromID) then
-        return false
-    end
-
+function MythicTools:AccumulateDamageMeterSession(run, session, fieldName, requestedPlayers, additive)
     local guidMap = {}
     for fullName, stat in pairs(run.playerStats) do
         if stat.guid then
@@ -2718,31 +2702,78 @@ function MythicTools:AccumulateCombatType(run, sessionIDs, damageType, fieldName
         end
     end
 
+    if session ~= nil and not self:CanAccessTable(session) then
+        return false, true
+    end
+
+    local foundValues = false
+    if self:CanAccessTable(session) and type(session.combatSources) == "table" then
+        for _, source in ipairs(session.combatSources) do
+            local fullName = self:ResolveCompletedRunSource(run, guidMap, source)
+            if fullName and (not requestedPlayers or requestedPlayers[fullName]) then
+                local stat = self:EnsureCompletedRunPlayer(run, fullName)
+                local amount = GetCombatSourceTotalAmount(source)
+                if fieldName == "interrupts" then
+                    local baseAmount = additive and (stat[fieldName] or 0) or 0
+                    stat[fieldName] = NormalizeInterruptCount(baseAmount + amount)
+                elseif additive then
+                    stat[fieldName] = (stat[fieldName] or 0) + amount
+                else
+                    stat[fieldName] = amount
+                end
+
+                if not stat.guid and source.sourceGUID and self:CanAccessValue(source.sourceGUID) then
+                    stat.guid = source.sourceGUID
+                    guidMap[source.sourceGUID] = fullName
+                end
+
+                self:ApplySourceMetadataToStat(stat, source)
+                foundValues = true
+            end
+        end
+    end
+
+    return foundValues, false
+end
+
+function MythicTools:AccumulateOverallDamageMeterType(run, damageType, fieldName, requestedPlayers)
+    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromType) then
+        return false, false
+    end
+
+    local ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, DAMAGE_METER_OVERALL_SESSION, damageType)
+    if not ok then
+        return false, false
+    end
+
+    return self:AccumulateDamageMeterSession(run, session, fieldName, requestedPlayers, false)
+end
+
+function MythicTools:AccumulateOverallDamageMeterData(run)
+    local foundValues = false
+    local blocked = false
+
+    local foundDamage, damageBlocked = self:AccumulateOverallDamageMeterType(run, DAMAGE_DONE, "damage")
+    local foundHealing, healingBlocked = self:AccumulateOverallDamageMeterType(run, HEALING_DONE, "healing")
+    local foundInterrupts, interruptsBlocked = self:AccumulateOverallDamageMeterType(run, INTERRUPTS, "interrupts")
+
+    foundValues = foundDamage or foundHealing or foundInterrupts
+    blocked = damageBlocked or healingBlocked or interruptsBlocked
+
+    return foundValues, blocked
+end
+
+function MythicTools:AccumulateCombatType(run, sessionIDs, damageType, fieldName, requestedPlayers)
+    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromID) then
+        return false
+    end
+
     local blocked = false
     for _, sessionID in ipairs(sessionIDs) do
-        local session = C_DamageMeter.GetCombatSessionFromID(sessionID, damageType)
-        if session ~= nil and not self:CanAccessTable(session) then
-            blocked = true
-        elseif self:CanAccessTable(session) and type(session.combatSources) == "table" then
-            for _, source in ipairs(session.combatSources) do
-                local fullName = self:ResolveCompletedRunSource(run, guidMap, source)
-                if fullName and (not requestedPlayers or requestedPlayers[fullName]) then
-                    local stat = self:EnsureCompletedRunPlayer(run, fullName)
-                    local amount = GetCombatSourceTotalAmount(source)
-                    if fieldName == "interrupts" then
-                        stat[fieldName] = NormalizeInterruptCount((stat[fieldName] or 0) + amount)
-                    else
-                        stat[fieldName] = (stat[fieldName] or 0) + amount
-                    end
-
-                    if not stat.guid and source.sourceGUID and self:CanAccessValue(source.sourceGUID) then
-                        stat.guid = source.sourceGUID
-                        guidMap[source.sourceGUID] = fullName
-                    end
-
-                    self:ApplySourceMetadataToStat(stat, source)
-                end
-            end
+        local ok, session = pcall(C_DamageMeter.GetCombatSessionFromID, sessionID, damageType)
+        if ok then
+            local _, sessionBlocked = self:AccumulateDamageMeterSession(run, session, fieldName, requestedPlayers, true)
+            blocked = sessionBlocked or blocked
         end
     end
 
@@ -3834,75 +3865,41 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
 
     self:HydrateObservedScoresForTarget(run)
 
-    local foundDetailsStats = self:AccumulateDetailsData(run)
     if self:RefreshCompletedRunScoresFromBlizzard(run, activeRun) then
         self:PushRuntimeDebug(("refreshed m+ scores from blizzard run %s"):format(tostring(run.runId)))
     end
-    local detailsMatchedRun = (tonumber(run.combatTimeSeconds) or 0) > 0 and not RunNeedsExactCombatTime(run)
-    local hadDetailsStats = foundDetailsStats and HasAnyRunStats(run)
 
-    if detailsMatchedRun then
-        run.statsSource = "details"
-        for _, fullName in ipairs(run.roster or {}) do
-            local stat = self:EnsureCompletedRunPlayer(run, fullName)
-            if stat.damage == nil then
-                stat.damage = 0
-            end
-            if stat.healing == nil then
-                stat.healing = 0
-            end
-            if stat.interrupts == nil then
-                stat.interrupts = 0
-            end
-        end
-
-        run.statsUnavailable = false
-        activeRun.damageMeterResetVerified = false
-        if activeRun.damageMeterResetSuspected then
-            self:ClearDamageMeterResetSuspicion(activeRun)
-        end
-        self:RefreshRunDerivedStats(run)
-        return false
-    end
-
-    if hadDetailsStats then
-        run.statsSource = "details_partial"
-        run.statsUnavailable = false
-    end
-
-    local preHydrateCombatTime = tonumber(run.combatTimeSeconds) or 0
     self:HydrateRunCombatDuration(run)
-    local usedDamageMeterDuration = preHydrateCombatTime <= 0 and (tonumber(run.combatTimeSeconds) or 0) > 0
-
-    local missingFields = self:GetMissingRunStatFields(run)
-    local needsBlizzardFallback = HasMissingEntries(missingFields.damage) or HasMissingEntries(missingFields.healing) or HasMissingEntries(missingFields.interrupts)
-    local damageMeterAvailable = C_DamageMeter and C_DamageMeter.IsDamageMeterAvailable and C_DamageMeter.IsDamageMeterAvailable()
-    local missingBeforeFallback = CountMissingEntries(missingFields.damage) + CountMissingEntries(missingFields.healing) + CountMissingEntries(missingFields.interrupts)
-    local damageMeterSessionIDs = self:GetDamageMeterSessionIDsForTotals(run)
+    local damageMeterAvailable = C_DamageMeter and (not C_DamageMeter.IsDamageMeterAvailable or C_DamageMeter.IsDamageMeterAvailable())
 
     if not damageMeterAvailable then
-        if hadDetailsStats then
-            run.statsUnavailable = false
-            if (tonumber(run.combatTimeSeconds) or 0) <= 0 then
-                AppendRunNote(run, "Using Details! totals. Combat duration could not be verified, so DPS/HPS use player activity time when available.")
-            else
-                AppendRunNote(run, "Using Details! totals for this run.")
-            end
-        else
-            run.statsUnavailable = true
-            AppendRunNote(run, "No Details! or C_DamageMeter totals were available for this run.")
+        if C_DamageMeter and allowRetry and not activeRun.damageMeterResetSuspected then
+            run.statsNote = "Waiting for damage meter totals."
+            return true
         end
+
+        run.statsUnavailable = true
+        AppendRunNote(run, "Blizzard damage meter totals were not available for this run.")
         self:RefreshRunDerivedStats(run)
         return false
     end
 
-    if needsBlizzardFallback and #damageMeterSessionIDs == 0 and allowRetry and not activeRun.damageMeterResetSuspected then
-        run.statsNote = "Waiting for damage meter sessions."
+    local _, overallBlocked = self:AccumulateOverallDamageMeterData(run)
+    if overallBlocked and allowRetry then
+        run.statsNote = "Waiting for damage meter totals."
         return true
     end
 
-    if needsBlizzardFallback then
-        local _, partyDataBlocked = self:AccumulatePartyData(run, damageMeterSessionIDs)
+    local missingFields = self:GetMissingRunStatFields(run)
+    local damageMeterSessionIDs = self:GetDamageMeterSessionIDsForTotals(run)
+
+    if HasMissingEntries(missingFields.damage) or HasMissingEntries(missingFields.healing) or HasMissingEntries(missingFields.interrupts) then
+        if #damageMeterSessionIDs == 0 and allowRetry and not activeRun.damageMeterResetSuspected then
+            run.statsNote = "Waiting for damage meter sessions."
+            return true
+        end
+
+        local _, partyDataBlocked = self:AccumulatePartyData(run, damageMeterSessionIDs, missingFields)
         if partyDataBlocked and allowRetry then
             return true
         end
@@ -3929,28 +3926,23 @@ function MythicTools:FinalizeRunStats(activeRun, run, allowRetry)
 
     local hasStats = HasAnyRunStats(run)
     if hasStats then
-        local missingAfter = self:GetMissingRunStatFields(run)
-        local missingAfterFallback = CountMissingEntries(missingAfter.damage) + CountMissingEntries(missingAfter.healing) + CountMissingEntries(missingAfter.interrupts)
-        local usedDamageMeterFields = missingAfterFallback < missingBeforeFallback
-
-        if hadDetailsStats then
-            if detailsMatchedRun then
-                run.statsSource = "details"
-            elseif usedDamageMeterFields or usedDamageMeterDuration then
-                run.statsSource = "details_hybrid"
-                AppendRunNote(run, "Using Details! totals with Blizzard damage meter fallback for timing or missing players.")
-            else
-                run.statsSource = "details_partial"
-                if (tonumber(run.combatTimeSeconds) or 0) <= 0 then
-                    AppendRunNote(run, "Using Details! totals. DPS/HPS use player activity time when full combat duration is unavailable.")
-                else
-                    AppendRunNote(run, "Using Details! totals for this run.")
-                end
+        local hasDamageStats = HasRunStatField(run, "damage")
+        local hasHealingStats = HasRunStatField(run, "healing")
+        local hasInterruptStats = HasRunStatField(run, "interrupts")
+        for _, fullName in ipairs(run.roster or {}) do
+            local stat = self:EnsureCompletedRunPlayer(run, fullName)
+            if hasDamageStats and stat.damage == nil then
+                stat.damage = 0
             end
-        else
-            run.statsSource = "damage_meter"
+            if hasHealingStats and stat.healing == nil then
+                stat.healing = 0
+            end
+            if hasInterruptStats and stat.interrupts == nil then
+                stat.interrupts = 0
+            end
         end
 
+        run.statsSource = "damage_meter"
         run.statsUnavailable = false
         activeRun.damageMeterResetVerified = false
         if activeRun.damageMeterResetSuspected then

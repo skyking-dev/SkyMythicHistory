@@ -3226,7 +3226,7 @@ function MythicTools:RefreshSettingsView()
     end
 
     self.ui.settingsSummary:SetText((
-        "Saved runs: %d\nIndexed players: %d\n%s\nPopup: %s (%s, delay %ss, scale %.1f)\nData source: Details! preferred, C_DamageMeter fallback"
+        "Saved runs: %d\nIndexed players: %d\n%s\nPopup: %s (%s, delay %ss, scale %.1f)\nData source: Blizzard damage meter"
     ):format(
         #self.db.runs,
         self:GetPlayerCount(),
